@@ -8,7 +8,8 @@ import {
   prospectSearches,
   runLogs,
 } from "@/lib/db/schema";
-import { serverError } from "@/lib/api";
+import { jsonError, serverError } from "@/lib/api";
+import { OpenRouterError, SIN_SALDO } from "@/lib/openrouter";
 import { SUPPORTED_ACTORS, startRun } from "@/lib/apify";
 import { construirEntrada, traducirIcpAFiltros } from "@/lib/prospect";
 import { barrerBusquedasPendientes } from "@/lib/prospect-ingest";
@@ -98,7 +99,9 @@ export async function POST() {
     const ultimaBusqueda = await db
       .select({
         workspaceId: prospectSearches.workspaceId,
-        cuando: sql<string>`max(${prospectSearches.createdAt})`,
+        // ::text para que ordene como fecha. `String(new Date(...))` devuelve
+        // "Sun Aug 23 2026..." y eso se ordena por el nombre del día.
+        cuando: sql<string>`max(${prospectSearches.createdAt})::text`,
       })
       .from(prospectSearches)
       .where(eq(prospectSearches.origin, "automatica"))
@@ -120,6 +123,7 @@ export async function POST() {
     }[] = [];
     const saltadas: { empresa: string; motivo: string; detalle?: string }[] =
       [];
+    const fallidas: { empresa: string; angulo: string; error: string }[] = [];
 
     for (const empresa of empresas) {
       const ajustes = await ajustesEfectivos(empresa.id);
@@ -162,16 +166,20 @@ export async function POST() {
         lanzadas,
         globales.autoProspectMaxSearchesPerDay,
         inicioDelDia,
+        fallidas,
       );
     }
 
     await db.insert(runLogs).values({
       workflow: "sdr-reabastecer",
-      level: "info",
-      message: `Reabastecimiento: ${lanzadas.length} búsquedas lanzadas`,
+      level: fallidas.length ? "error" : "info",
+      message: fallidas.length
+        ? `Reabastecimiento: ${lanzadas.length} lanzadas y ${fallidas.length} que NO arrancaron. ${fallidas[0].error.slice(0, 120)}`
+        : `Reabastecimiento: ${lanzadas.length} búsquedas lanzadas`,
       payload: {
         lanzadas,
         saltadas,
+        fallidas,
         barrido,
         busquedasHoy: Number(busquedasHoy),
       },
@@ -181,8 +189,24 @@ export async function POST() {
       lanzadas: lanzadas.length,
       busquedas: lanzadas,
       saltadas,
+      fallidas,
+      ingeridas: barrido.ingeridas.length,
     });
   } catch (err) {
+    // Quedarse sin saldo en OpenRouter no es un fallo del sistema y conviene que
+    // se lea como lo que es: sin él no hay puntuación, ni filtros, ni mensajes.
+    if (err instanceof OpenRouterError && err.status === SIN_SALDO) {
+      await db.insert(runLogs).values({
+        workflow: "sdr-reabastecer",
+        level: "error",
+        message:
+          "OpenRouter sin saldo. No se puede prospectar ni escribir hasta recargar.",
+      });
+      return jsonError(
+        "OpenRouter se ha quedado sin saldo. Recarga en openrouter.ai/settings/credits.",
+        402,
+      );
+    }
     return serverError(err, "No se pudo reabastecer");
   }
 }
@@ -206,6 +230,15 @@ async function lanzarPara(
   }[],
   topeDiario: number,
   inicioDelDia: Date,
+  /**
+   * Las búsquedas que no llegaron a arrancar.
+   *
+   * Antes se marcaban "fallida" en la tabla y se seguía, así que la respuesta
+   * decía `lanzadas: 0, saltadas: []` y parecía que sencillamente no había nada
+   * que hacer. Con el límite mensual de Apify agotado, el sistema se pasó una
+   * hora "sin novedad" cuando en realidad no podía prospectar.
+   */
+  fallidas: { empresa: string; angulo: string; error: string }[],
 ) {
   for (const objetivo of objetivos) {
     const campana = estados.find((c) => c.id === objetivo.id);

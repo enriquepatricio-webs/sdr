@@ -12,37 +12,40 @@
  *    del dashboard puede poblarse sin exponer OPENROUTER_API_KEY al navegador.
  */
 
-const BASE = 'https://openrouter.ai/api/v1'
+const BASE = "https://openrouter.ai/api/v1";
 
-export type ChatRole = 'system' | 'user' | 'assistant' | 'tool'
+export type ChatRole = "system" | "user" | "assistant" | "tool";
 
 export type ChatMessage = {
-  role: ChatRole
-  content: string
-  tool_call_id?: string
-  name?: string
-}
+  role: ChatRole;
+  content: string;
+  tool_call_id?: string;
+  name?: string;
+};
 
 export type Usage = {
-  prompt_tokens: number
-  completion_tokens: number
-  total_tokens: number
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
   /** Importe real cargado, en USD. Es lo que se guarda en run_logs. */
-  cost?: number
-  prompt_tokens_details?: { cached_tokens?: number }
-  completion_tokens_details?: { reasoning_tokens?: number }
-}
+  cost?: number;
+  prompt_tokens_details?: { cached_tokens?: number };
+  completion_tokens_details?: { reasoning_tokens?: number };
+};
 
 export type ChatResult = {
   /** Id de generación. Sirve para auditar el coste luego en /generation. */
-  id: string
-  text: string
-  usage: Usage
-  model: string
-  finishReason: string | null
+  id: string;
+  text: string;
+  usage: Usage;
+  model: string;
+  finishReason: string | null;
   /** Milisegundos de reloj, medidos aquí. */
-  latencyMs: number
-}
+  latencyMs: number;
+};
+
+/** 402 de OpenRouter: no es un fallo del sistema, es la cuenta sin saldo. */
+export const SIN_SALDO = 402;
 
 export class OpenRouterError extends Error {
   constructor(
@@ -50,15 +53,15 @@ export class OpenRouterError extends Error {
     readonly status: number,
     readonly body: string,
   ) {
-    super(message)
-    this.name = 'OpenRouterError'
+    super(message);
+    this.name = "OpenRouterError";
   }
 }
 
 function apiKey(): string {
-  const key = process.env.OPENROUTER_API_KEY
-  if (!key) throw new Error('OPENROUTER_API_KEY no está definida.')
-  return key
+  const key = process.env.OPENROUTER_API_KEY;
+  if (!key) throw new Error("OPENROUTER_API_KEY no está definida.");
+  return key;
 }
 
 /**
@@ -69,126 +72,173 @@ function apiKey(): string {
 function headers(): Record<string, string> {
   return {
     Authorization: `Bearer ${apiKey()}`,
-    'Content-Type': 'application/json',
-    'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000',
-    'X-OpenRouter-Title': 'SDR autónomo',
-  }
+    "Content-Type": "application/json",
+    "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
+    "X-OpenRouter-Title": "SDR autónomo",
+  };
 }
 
 export type ChatOptions = {
-  model: string
-  messages: ChatMessage[]
-  temperature?: number
-  maxTokens?: number
+  model: string;
+  messages: ChatMessage[];
+  temperature?: number;
+  maxTokens?: number;
   /**
    * Fuerza una respuesta que valide contra este JSON Schema. OpenRouter enruta
    * solo a proveedores que lo soporten porque se añade provider.require_parameters:
    * el soporte de structured outputs se decide por endpoint, no por modelo.
    */
-  jsonSchema?: { name: string; schema: Record<string, unknown> }
-  signal?: AbortSignal
-}
+  jsonSchema?: { name: string; schema: Record<string, unknown> };
+  /**
+   * Razonamiento del modelo. Los tokens de razonamiento salen del MISMO
+   * presupuesto que la respuesta, así que con esto encendido y un `max_tokens`
+   * ajustado el modelo se lo gasta pensando y devuelve el JSON a medias.
+   */
+  reasoning?: { enabled: boolean };
+  signal?: AbortSignal;
+};
 
 export async function chat(options: ChatOptions): Promise<ChatResult> {
-  const startedAt = Date.now()
+  const startedAt = Date.now();
 
   const body: Record<string, unknown> = {
     model: options.model,
     messages: options.messages,
-  }
-  if (options.temperature !== undefined) body.temperature = options.temperature
-  if (options.maxTokens !== undefined) body.max_tokens = options.maxTokens
+  };
+  if (options.temperature !== undefined) body.temperature = options.temperature;
+  if (options.maxTokens !== undefined) body.max_tokens = options.maxTokens;
+  if (options.reasoning !== undefined) body.reasoning = options.reasoning;
   if (options.jsonSchema) {
     body.response_format = {
-      type: 'json_schema',
-      json_schema: { name: options.jsonSchema.name, strict: true, schema: options.jsonSchema.schema },
-    }
-    body.provider = { require_parameters: true }
+      type: "json_schema",
+      json_schema: {
+        name: options.jsonSchema.name,
+        strict: true,
+        schema: options.jsonSchema.schema,
+      },
+    };
+    body.provider = { require_parameters: true };
   }
 
   const res = await fetch(`${BASE}/chat/completions`, {
-    method: 'POST',
+    method: "POST",
     headers: headers(),
     body: JSON.stringify(body),
     signal: options.signal,
-  })
+  });
 
-  const raw = await res.text()
+  const raw = await res.text();
   if (!res.ok) {
     throw new OpenRouterError(
       `OpenRouter respondió ${res.status}: ${raw.slice(0, 400)}`,
       res.status,
       raw,
-    )
+    );
   }
 
   let parsed: {
-    id: string
-    model: string
-    choices?: { message?: { content?: string }; finish_reason?: string }[]
-    usage?: Usage
-    error?: { message?: string }
-  }
+    id: string;
+    model: string;
+    choices?: { message?: { content?: string }; finish_reason?: string }[];
+    usage?: Usage;
+    error?: { message?: string };
+  };
   try {
-    parsed = JSON.parse(raw)
+    parsed = JSON.parse(raw);
   } catch {
-    throw new OpenRouterError('OpenRouter devolvió algo que no es JSON', res.status, raw)
+    throw new OpenRouterError(
+      "OpenRouter devolvió algo que no es JSON",
+      res.status,
+      raw,
+    );
   }
 
   // Un 200 con `error` dentro ocurre cuando falla el proveedor de destino.
   if (parsed.error) {
     throw new OpenRouterError(
-      `OpenRouter devolvió error en un 200: ${parsed.error.message ?? 'sin mensaje'}`,
+      `OpenRouter devolvió error en un 200: ${parsed.error.message ?? "sin mensaje"}`,
       res.status,
       raw,
-    )
+    );
   }
 
-  const choice = parsed.choices?.[0]
+  const choice = parsed.choices?.[0];
   return {
     id: parsed.id,
-    text: choice?.message?.content ?? '',
+    text: choice?.message?.content ?? "",
     model: parsed.model,
     finishReason: choice?.finish_reason ?? null,
-    usage: parsed.usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    usage: parsed.usage ?? {
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_tokens: 0,
+    },
     latencyMs: Date.now() - startedAt,
-  }
+  };
 }
+
+/**
+ * Techo de salida para las llamadas que devuelven JSON.
+ *
+ * Sin `max_tokens`, OpenRouter reserva el máximo del modelo —65.536 con
+ * DeepSeek— y RECHAZA la petición con un 402 si el saldo no cubre ese máximo,
+ * aunque la respuesta real vaya a ocupar cuatrocientos tokens. Con el saldo
+ * bajo, todo el sistema se paraba con "requires more credits" sin haber gastado
+ * nada.
+ *
+ * Todo lo que pasa por aquí devuelve un objeto pequeño, pero DeepSeek razona
+ * antes de escribirlo y ese razonamiento sale del mismo presupuesto: con 4.000
+ * devolvía el JSON cortado a la mitad. 8.000 es lo que ya usa el agente de
+ * conversación en n8n por exactamente el mismo motivo.
+ */
+const TECHO_JSON = 8000;
 
 /** Igual que `chat` pero devuelve el JSON ya parseado y tipado. */
 export async function chatJson<T>(
-  options: ChatOptions & { jsonSchema: NonNullable<ChatOptions['jsonSchema']> },
+  options: ChatOptions & { jsonSchema: NonNullable<ChatOptions["jsonSchema"]> },
 ): Promise<{ data: T; usage: Usage; id: string }> {
-  const result = await chat(options)
+  const result = await chat({
+    maxTokens: TECHO_JSON,
+    // Sin razonamiento: rellenar un formulario acotado por un esquema no lo
+    // necesita, y con él el modelo se comía el presupuesto pensando y cortaba
+    // el JSON por la mitad. Donde hace falta justificar algo, el propio esquema
+    // tiene un campo `razonamiento` que el modelo escribe como respuesta.
+    reasoning: { enabled: false },
+    ...options,
+  });
   try {
-    return { data: JSON.parse(result.text) as T, usage: result.usage, id: result.id }
+    return {
+      data: JSON.parse(result.text) as T,
+      usage: result.usage,
+      id: result.id,
+    };
   } catch {
     throw new OpenRouterError(
       `El modelo no devolvió JSON válido pese al schema estricto: ${result.text.slice(0, 300)}`,
       200,
       result.text,
-    )
+    );
   }
 }
 
 export type ModelInfo = {
-  id: string
-  name: string
-  contextLength: number
+  id: string;
+  name: string;
+  contextLength: number;
   /** USD por millón de tokens, ya convertido desde el precio por token. */
-  promptPerMillion: number
-  completionPerMillion: number
-  supportsTools: boolean
-  supportsStructuredOutputs: boolean
-}
+  promptPerMillion: number;
+  completionPerMillion: number;
+  supportsTools: boolean;
+  supportsStructuredOutputs: boolean;
+};
 
 type RawModel = {
-  id: string
-  name: string
-  context_length?: number
-  pricing?: { prompt?: string; completion?: string }
-  supported_parameters?: string[]
-}
+  id: string;
+  name: string;
+  context_length?: number;
+  pricing?: { prompt?: string; completion?: string };
+  supported_parameters?: string[];
+};
 
 /**
  * Lista de modelos con precios. Endpoint público: no manda la API key.
@@ -201,11 +251,15 @@ export async function listModels(signal?: AbortSignal): Promise<ModelInfo[]> {
     signal,
     // El catálogo rota, pero no tanto como para pedirlo en cada pintado.
     next: { revalidate: 60 * 60 * 6 },
-  })
+  });
   if (!res.ok) {
-    throw new OpenRouterError(`No se pudo listar modelos (${res.status})`, res.status, '')
+    throw new OpenRouterError(
+      `No se pudo listar modelos (${res.status})`,
+      res.status,
+      "",
+    );
   }
-  const json = (await res.json()) as { data?: RawModel[] }
+  const json = (await res.json()) as { data?: RawModel[] };
   return (json.data ?? [])
     .map((m) => ({
       id: m.id,
@@ -213,10 +267,11 @@ export async function listModels(signal?: AbortSignal): Promise<ModelInfo[]> {
       contextLength: m.context_length ?? 0,
       promptPerMillion: Number(m.pricing?.prompt ?? 0) * 1e6,
       completionPerMillion: Number(m.pricing?.completion ?? 0) * 1e6,
-      supportsTools: m.supported_parameters?.includes('tools') ?? false,
-      supportsStructuredOutputs: m.supported_parameters?.includes('structured_outputs') ?? false,
+      supportsTools: m.supported_parameters?.includes("tools") ?? false,
+      supportsStructuredOutputs:
+        m.supported_parameters?.includes("structured_outputs") ?? false,
     }))
-    .sort((a, b) => a.id.localeCompare(b.id))
+    .sort((a, b) => a.id.localeCompare(b.id));
 }
 
 /**
@@ -227,5 +282,5 @@ export async function listModels(signal?: AbortSignal): Promise<ModelInfo[]> {
  * tiene que avisar de que un prompt se está yendo de las manos.
  */
 export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 3.6)
+  return Math.ceil(text.length / 3.6);
 }
