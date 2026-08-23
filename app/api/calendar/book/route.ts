@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { campaigns, leads, meetings, playbooks, runLogs } from '@/lib/db/schema'
-import { jsonError, parseBody, serverError } from '@/lib/api'
+import { fechaIso,jsonError, parseBody, serverError } from '@/lib/api'
 import { agendarReunion } from '@/lib/composio'
 import { avisar, formatearAvisoReunion } from '@/lib/telegram'
 
@@ -12,8 +12,8 @@ export const maxDuration = 60
 
 const cuerpo = z.object({
   leadId: z.string().uuid(),
-  inicio: z.string().datetime(),
-  fin: z.string().datetime().optional(),
+  inicio: fechaIso(),
+  fin: fechaIso().optional(),
 })
 
 /**

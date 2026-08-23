@@ -1,6 +1,6 @@
 /** Utilidades comunes de los route handlers. */
 import { NextResponse } from 'next/server'
-import { ZodError, type ZodType } from 'zod'
+import { ZodError, type ZodType, z } from 'zod'
 
 export function jsonError(message: string, status = 400, extra?: Record<string, unknown>) {
   return NextResponse.json({ error: message, ...extra }, { status })
@@ -41,3 +41,18 @@ export function serverError(err: unknown, contexto: string) {
   console.error(`[${contexto}]`, err)
   return jsonError(`${contexto}: ${message}`, 500)
 }
+
+/**
+ * Una fecha ISO 8601, venga en UTC o con desfase horario.
+ *
+ * `z.string().datetime()` a secas EXIGE que acabe en `Z` y rechaza
+ * `2026-08-26T20:53:58+02:00`. El `$now.plus(3,'days').toISO()` de n8n devuelve
+ * exactamente eso, con lo que todas las rutas que recibían una fecha desde un
+ * workflow contestaban 400 "Invalid ISO datetime". Como los nodos van con
+ * `continueRegularOutput`, el fallo no paraba nada: simplemente no se enviaba
+ * ni un mensaje y no se enteraba nadie.
+ *
+ * Está aquí, y no repetido en nueve rutas, porque el que se dejó estricto es el
+ * que rompe el sistema entero.
+ */
+export const fechaIso = () => z.string().datetime({ offset: true })

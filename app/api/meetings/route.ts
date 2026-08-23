@@ -5,14 +5,15 @@ import { db } from "@/lib/db";
 import { campaigns, leads, meetings, runLogs } from "@/lib/db/schema";
 import { jsonError, parseBody, serverError } from "@/lib/api";
 import { obtenerWorkspace } from "@/lib/workspace";
+import { fechaIso } from '@/lib/api'
 
 export const dynamic = "force-dynamic";
 
 const cuerpo = z.object({
   leadId: z.string().uuid(),
   composioEventId: z.string().optional(),
-  startAt: z.string().datetime(),
-  endAt: z.string().datetime(),
+  startAt: fechaIso(),
+  endAt: fechaIso(),
   meetUrl: z.string().url().optional(),
 });
 

@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { TERMINAL_LEAD_STATUSES, accounts, campaigns, leads, runLogs, touches } from '@/lib/db/schema'
-import { jsonError, parseBody, serverError } from '@/lib/api'
+import { fechaIso,jsonError, parseBody, serverError } from '@/lib/api'
 import { UnipileError, enviarEnChat, iniciarChat, invitar } from '@/lib/unipile'
 import { ajustesEfectivos } from '@/lib/workspace'
 import { AVISO_SIN_PRECIOS, mencionaDinero } from '@/lib/sin-precios'
@@ -20,7 +20,7 @@ const cuerpo = z.object({
   /** Hilo existente. Si no viene, se abre uno nuevo. */
   chatId: z.string().optional(),
   /** Cuándo toca el siguiente toque, si procede. */
-  nextActionAt: z.string().datetime().optional(),
+  nextActionAt: fechaIso().optional(),
   /** Estado al que pasa el lead después de enviar. */
   nuevoEstado: z
     .enum(['contactado', 'en_seguimiento', 'respondido', 'cualificando', 'cualificado'])

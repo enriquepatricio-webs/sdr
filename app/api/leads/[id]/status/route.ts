@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { leadStatusEnum, leads, runLogs } from '@/lib/db/schema'
-import { jsonError, parseBody, serverError } from '@/lib/api'
+import { fechaIso,jsonError, parseBody, serverError } from '@/lib/api'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,7 +22,7 @@ const cuerpo = z.object({
       disqualified_by: z.string().optional(),
     })
     .optional(),
-  nextActionAt: z.string().datetime().nullable().optional(),
+  nextActionAt: fechaIso().nullable().optional(),
   /** Motivo del cambio. Se guarda en run_logs para poder auditarlo después. */
   motivo: z.string().optional(),
 })

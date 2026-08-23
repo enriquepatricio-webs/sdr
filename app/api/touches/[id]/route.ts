@@ -3,7 +3,7 @@ import { eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { leads, touches } from '@/lib/db/schema'
-import { jsonError, parseBody, serverError } from '@/lib/api'
+import { fechaIso,jsonError, parseBody, serverError } from '@/lib/api'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,9 +11,9 @@ const cuerpo = z.object({
   status: z.enum(['enviado', 'fallido']),
   unipileMessageId: z.string().optional(),
   unipileChatId: z.string().optional(),
-  sentAt: z.string().datetime().optional(),
+  sentAt: fechaIso().optional(),
   /** Cuándo toca el siguiente toque. Lo calcula n8n con followup_delays. */
-  nextActionAt: z.string().datetime().optional(),
+  nextActionAt: fechaIso().optional(),
 })
 
 /**
