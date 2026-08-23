@@ -45,9 +45,13 @@ const MINIMO_POR_ARRANQUE = 4;
 
 function presupuestoHastaAhora(topeDiario: number, ahora: Date): number {
   const h = ahora.getUTCHours() + ahora.getUTCMinutes() / 60;
-  const avance = (h - RELEASE_DESDE_UTC) / (RELEASE_HASTA_UTC - RELEASE_DESDE_UTC);
+  const avance =
+    (h - RELEASE_DESDE_UTC) / (RELEASE_HASTA_UTC - RELEASE_DESDE_UTC);
   const proporcional = Math.ceil(topeDiario * Math.min(1, Math.max(0, avance)));
-  return Math.max(Math.min(MINIMO_POR_ARRANQUE, topeDiario), Math.min(topeDiario, proporcional));
+  return Math.max(
+    Math.min(MINIMO_POR_ARRANQUE, topeDiario),
+    Math.min(topeDiario, proporcional),
+  );
 }
 
 /**
@@ -198,7 +202,10 @@ export async function POST() {
         ajustes,
         estados,
         lanzadas,
-        presupuestoHastaAhora(globales.autoProspectMaxSearchesPerDay, new Date()),
+        presupuestoHastaAhora(
+          globales.autoProspectMaxSearchesPerDay,
+          new Date(),
+        ),
         inicioDelDia,
         fallidas,
       );
@@ -277,9 +284,35 @@ async function lanzarPara(
   for (const objetivo of objetivos) {
     const campana = estados.find((c) => c.id === objetivo.id);
     if (!campana) continue;
-    // El canal ES la fuente: para mandar un correo hace falta un correo, y eso
-    // solo lo da Google Maps.
-    const fuente = campana.channel;
+    /**
+     * El canal decide la fuente, con una excepción medida.
+     *
+     * Para el correo solo sirve Google Maps, que es lo único que devuelve una
+     * dirección. Para LinkedIn, LinkedIn. Y para Instagram las dos, alternando:
+     * la búsqueda nativa por hashtag va bien cuando el ICP es un tipo de negocio
+     * reconocible —restaurantes— y trae ruido cuando es amplio (7 candidatos y
+     * ninguno válido buscando "cualquier empresa"). Maps, en cambio, da negocios
+     * verificados Y su @usuario de Instagram, sacado de su propia web.
+     *
+     * Alternar sale más barato que elegir bien: cada vuelta prueba la otra, y la
+     * que funcione llenará la campaña. Se mira qué se usó la última vez para
+     * esta campaña, así que no hace falta guardar nada.
+     */
+    let fuente: typeof campana.channel = campana.channel;
+    if (campana.channel === "instagram") {
+      const [ultima] = await db
+        .select({ source: prospectSearches.source })
+        .from(prospectSearches)
+        .where(
+          and(
+            eq(prospectSearches.campaignId, campana.id),
+            eq(prospectSearches.origin, "automatica"),
+          ),
+        )
+        .orderBy(desc(prospectSearches.createdAt))
+        .limit(1);
+      fuente = ultima?.source === "instagram" ? "email" : "instagram";
+    }
 
     const [icp] = await db
       .select()

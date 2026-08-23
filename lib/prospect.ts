@@ -36,64 +36,105 @@ const SCHEMA_LINKEDIN = {
   type: "object",
   additionalProperties: false,
   properties: {
-    searchQuery: {
-      type: "string",
-      description:
-        'Búsqueda difusa en castellano o inglés. Ej: "fundador consultoría B2B".',
-    },
-    currentJobTitles: {
-      type: "array",
-      items: { type: "string" },
-      description: 'Cargos actuales exactos. Ej: ["Founder","CEO","Socio"].',
-    },
-    locations: {
+    personTitleIncludes: {
       type: "array",
       items: { type: "string" },
       description:
-        'Ubicaciones tal y como las entiende LinkedIn. Usa el nombre completo del país: "Spain", no "ES".',
+        'Cargos, entre uno y tres. Ej: ["Fundador","CEO","Director de Marketing"]. Se buscan también variantes en inglés.',
     },
-    companyHeadcount: {
-      type: "array",
-      items: {
-        type: "string",
-        enum: ["A", "B", "C", "D", "E", "F", "G", "H", "I"],
-      },
-      description:
-        "Tamaño de empresa: A=autónomo, B=1-10, C=11-50, D=51-200, E=201-500, F=501-1000, G=1001-5000, H=5001-10000, I=10001+.",
-    },
-    seniorityLevelIds: {
+    seniorityIncludes: {
       type: "array",
       items: {
         type: "string",
         enum: [
-          "100",
-          "110",
-          "120",
-          "130",
-          "200",
-          "210",
-          "220",
-          "300",
-          "310",
-          "320",
+          "c_suite",
+          "vp",
+          "director",
+          "manager",
+          "senior",
+          "entry",
+          "owner",
+          "partner",
         ],
       },
       description:
-        "Seniority: 120=Senior, 220=Director, 300=VP, 310=CXO, 320=Owner/Partner. Para decisores usa 310 y 320.",
+        "Nivel de decisión. Para quien decide la compra: owner, c_suite, partner y director.",
     },
-    excludeCurrentJobTitles: {
-      type: "array",
-      items: { type: "string" },
-      description:
-        "Cargos que descartan. Sale de los descalificadores del ICP.",
-    },
-    profileLanguages: {
+    functionIncludes: {
       type: "array",
       items: {
         type: "string",
-        enum: ["Spanish", "English", "Portuguese", "French", "Italian"],
+        enum: [
+          "marketing",
+          "sales",
+          "operations",
+          "business_development",
+          "finance",
+          "consulting",
+          "education",
+          "engineering",
+          "information_technology",
+          "human_resources",
+          "support",
+        ],
       },
-      description: "Idioma del perfil.",
+      description:
+        "Departamento. Úsalo solo si el ICP habla de un área concreta.",
+    },
+    personLocationCountryIncludes: {
+      type: "array",
+      items: {
+        type: "string",
+        enum: [
+          "Spain",
+          "Mexico",
+          "Argentina",
+          "Colombia",
+          "Chile",
+          "Peru",
+          "United States",
+          "United Kingdom",
+          "France",
+          "Italy",
+          "Germany",
+        ],
+      },
+      description: 'País de la persona, en inglés. Por defecto ["Spain"].',
+    },
+    personLocationCityIncludes: {
+      type: "array",
+      items: { type: "string" },
+      description:
+        "Ciudades concretas. Cambiar de ciudad es un buen ángulo nuevo.",
+    },
+    companyIndustryIncludes: {
+      type: "array",
+      items: { type: "string" },
+      description:
+        'Sectores de la empresa. Ej: ["hospital & health care","real estate"].',
+    },
+    companyKeywordIncludes: {
+      type: "array",
+      items: { type: "string" },
+      description:
+        "Palabras que aparecen en el nombre o la descripción de la empresa. Es lo más potente para acotar un ICP raro.",
+    },
+    companySizeIncludes: {
+      type: "array",
+      items: {
+        type: "string",
+        enum: [
+          "1-10",
+          "11-50",
+          "51-200",
+          "201-500",
+          "501-1000",
+          "1001-5000",
+          "5001-10000",
+          "10001+",
+        ],
+      },
+      description: "Plantilla de la empresa.",
     },
     razonamiento: {
       type: "string",
@@ -103,10 +144,10 @@ const SCHEMA_LINKEDIN = {
     angulo: {
       type: "string",
       description:
-        'Etiqueta corta de este ángulo de búsqueda, máximo ocho palabras. Ej: "consultoras de RRHH en Valencia".',
+        'Etiqueta corta de este ángulo, máximo ocho palabras. Ej: "dueños de clínicas dentales en Valencia".',
     },
   },
-  required: ["searchQuery", "razonamiento", "angulo"],
+  required: ["personTitleIncludes", "razonamiento", "angulo"],
 } as const;
 
 const SCHEMA_INSTAGRAM = {
@@ -299,20 +340,27 @@ export async function traducirIcpAFiltros(
  * rutas que lanzan búsquedas. Vive aquí para que añadir una fuente sea un solo
  * sitio y para que las dos no se desincronicen.
  */
-/** Valores que el actor de LinkedIn acepta. Fuera de esta lista devuelve un 400. */
+/** Valores que la base B2B acepta. Fuera de esta lista devuelve un 400. */
 const SENIORITY_VALIDOS = [
-  "100",
-  "110",
-  "120",
-  "130",
-  "200",
-  "210",
-  "220",
-  "300",
-  "310",
-  "320",
+  "c_suite",
+  "vp",
+  "director",
+  "manager",
+  "senior",
+  "entry",
+  "owner",
+  "partner",
 ];
-const HEADCOUNT_VALIDOS = ["A", "B", "C", "D", "E", "F", "G", "H", "I"];
+const HEADCOUNT_VALIDOS = [
+  "1-10",
+  "11-50",
+  "51-200",
+  "201-500",
+  "501-1000",
+  "1001-5000",
+  "5001-10000",
+  "10001+",
+];
 
 /**
  * Los enums del actor de LinkedIn son CADENAS, y el modelo a veces devuelve
@@ -341,15 +389,37 @@ export function construirEntrada(
   maxItems: number,
 ): Record<string, unknown> {
   if (fuente === "linkedin") {
-    const { seniorityLevelIds, companyHeadcount, ...resto } = filtros;
-    const seniority = soloValores(seniorityLevelIds, SENIORITY_VALIDOS);
-    const plantilla = soloValores(companyHeadcount, HEADCOUNT_VALIDOS);
+    const { seniorityIncludes, companySizeIncludes, ...resto } = filtros;
     return {
       ...resto,
-      ...(seniority ? { seniorityLevelIds: seniority } : {}),
-      ...(plantilla ? { companyHeadcount: plantilla } : {}),
-      maxItems,
-      profileScraperMode: "Short",
+      // Se limpian los enums: el modelo a veces devuelve valores que no existen
+      // y el actor responde 400, matando la búsqueda entera con su ángulo.
+      ...(soloValores(seniorityIncludes, SENIORITY_VALIDOS)
+        ? {
+            seniorityIncludes: soloValores(
+              seniorityIncludes,
+              SENIORITY_VALIDOS,
+            ),
+          }
+        : {}),
+      ...(soloValores(companySizeIncludes, HEADCOUNT_VALIDOS)
+        ? {
+            companySizeIncludes: soloValores(
+              companySizeIncludes,
+              HEADCOUNT_VALIDOS,
+            ),
+          }
+        : {}),
+      totalResults: maxItems,
+      // Sin correo no se puede escribir, y esta base lo trae: pedirlo de entrada
+      // evita pagar por filas que luego se descartan al normalizar.
+      hasEmail: true,
+      emailStatusIncludes: ["verified"],
+      personLocationCountryIncludes:
+        Array.isArray(resto.personLocationCountryIncludes) &&
+        resto.personLocationCountryIncludes.length
+          ? resto.personLocationCountryIncludes
+          : ["Spain"],
     };
   }
   if (fuente === "instagram") {
@@ -433,61 +503,49 @@ export function normalizarCandidato(
   const raw = item as Record<string, any>;
 
   if (fuente === "linkedin") {
-    const nombre =
-      texto(raw.name, raw.fullName, raw.full_name) ??
-      texto([raw.firstName, raw.lastName].filter(Boolean).join(" "));
-    const url = texto(raw.linkedinUrl, raw.profileUrl, raw.url, raw.publicUrl);
-    const identificador = texto(raw.publicIdentifier, raw.public_identifier);
-    if (!nombre || !(url || identificador)) return null;
-
     /**
-     * El actor devuelve `currentPositions`, en PLURAL.
-     *
-     * Se leía en singular, así que el cargo y la empresa quedaban a null y al
-     * puntuador le llegaba un nombre suelto: "Vivian Garcia" en lugar de "CEO
-     * Founder en Marcas que Enamoran®, Madrid". Con eso rechazaba a casi todo el
-     * mundo por falta de información —dos aprobados de cada cincuenta— y LinkedIn
-     * parecía un canal inservible cuando lo que fallaba era una letra.
+     * Filas planas y ricas: la persona con su cargo y su empresa ya resueltos.
+     * Nada de `currentPositions` anidado, que es donde se perdía todo antes.
      */
-    const puesto =
-      (Array.isArray(raw.currentPositions) ? raw.currentPositions[0] : null) ??
-      (Array.isArray(raw.currentPosition) ? raw.currentPosition[0] : null) ??
-      {};
-    const acercaDe = texto(raw.summary, raw.about);
+    const nombre =
+      texto(raw.fullName, raw.name) ??
+      texto([raw.firstName, raw.lastName].filter(Boolean).join(" "));
+    const url = texto(raw.linkedinUrl, raw.profileUrl, raw.url);
+    const correo = texto(raw.email);
+    // Sin una vía de contacto no vale de nada, y esta fuente da las dos.
+    if (!nombre || !(url || correo)) return null;
 
     return {
       fullName: nombre,
       senales: [
-        raw.connectionsCount ? `${raw.connectionsCount} contactos` : "",
-        raw.followerCount ? `${raw.followerCount} seguidores` : "",
-        texto(puesto.companyIndustry, raw.industry),
-        puesto.companyStaffCountRange
-          ? `plantilla ${puesto.companyStaffCountRange}`
+        texto(raw.companyIndustry) ? `sector: ${raw.companyIndustry}` : "",
+        texto(raw.companySizeRange, raw.companySize)
+          ? `plantilla ${texto(raw.companySizeRange, raw.companySize)}`
           : "",
-        puesto.tenureAtCompany?.numYears
-          ? `${puesto.tenureAtCompany.numYears} años en la empresa`
+        raw.annualRevenue ? `facturación ${raw.annualRevenue}` : "",
+        raw.foundedYear ? `fundada en ${raw.foundedYear}` : "",
+        texto(raw.seniority) ? `nivel: ${raw.seniority}` : "",
+        Array.isArray(raw.technologies) && raw.technologies.length
+          ? `usa: ${raw.technologies.slice(0, 8).join(", ")}`
           : "",
-        raw.openProfile ? "perfil abierto a mensajes" : "",
-        // El "acerca de" es lo que mejor dice a qué se dedica de verdad.
-        acercaDe ? `se describe así: ${acercaDe.slice(0, 400)}` : "",
+        // La descripción de la empresa es lo que mejor dice a qué se dedica.
+        texto(raw.companyDescription)
+          ? `la empresa se describe así: ${String(raw.companyDescription).slice(0, 400)}`
+          : "",
+        raw.emailStatus ? `correo ${raw.emailStatus}` : "",
       ].filter((x): x is string => Boolean(x)),
-      headline: texto(puesto.title, raw.headline, raw.title, raw.occupation),
-      company: texto(
-        puesto.companyName,
-        raw.currentCompany?.name,
-        raw.companyName,
-        raw.company,
-      ),
+      headline: texto(raw.title, raw.position),
+      company: texto(raw.companyName),
       location: texto(
-        raw.location?.linkedinText,
-        raw.location?.parsed?.text,
-        raw.location,
-        raw.geo,
+        [raw.personCity, raw.personState, raw.personCountry]
+          .filter(Boolean)
+          .join(", "),
+        raw.companyCity,
       ),
-      linkedinUrl: url ?? `https://www.linkedin.com/in/${identificador}`,
+      linkedinUrl: url,
       instagramUsername: null,
-      email: texto(raw.email, raw.emailAddress),
-      providerId: texto(raw.id, raw.profileId, raw.urn),
+      email: correo,
+      providerId: texto(raw.id, raw.companyDomain),
       raw: item,
     };
   }

@@ -190,11 +190,19 @@ export function isFinished(status: RunStatus): boolean {
  * modelo es una llamada arbitraria a la API con la factura del usuario detrás.
  */
 export const SUPPORTED_ACTORS = {
+  /**
+   * Base de datos B2B tipo Apollo. Devuelve la persona YA con su correo, su URL
+   * de LinkedIn, su cargo y los datos de su empresa —sector, plantilla,
+   * facturación, tecnologías— en una sola fila.
+   *
+   * Sustituye al scraper de perfiles de LinkedIn, que costaba más, no daba
+   * correo y devolvía tan poco de cada perfil que el puntuador rechazaba a casi
+   * todo el mundo por falta de datos. Un dólar por mil leads.
+   */
   linkedin: {
-    actor: "harvestapi/linkedin-profile-search",
-    label: "Búsqueda de perfiles de LinkedIn",
-    /** Sin cookies ni cuenta: no arriesga la cuenta de LinkedIn del usuario. */
-    note: "Filtros de cargo, sector, tamaño de empresa y ubicación. No necesita cookies.",
+    actor: "pipelinelabs/lead-scraper-apollo-zoominfo-lusha-ppe",
+    label: "Base de datos B2B (cargo, empresa y correo)",
+    note: "Filtros de cargo, seniority, función, país y tamaño de empresa. Devuelve correo y LinkedIn.",
   },
   instagram: {
     actor: "apify/instagram-scraper",
