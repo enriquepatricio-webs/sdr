@@ -24,6 +24,27 @@ export const maxDuration = 300;
 const CAMPANAS_POR_VUELTA = 4;
 
 /**
+ * El presupuesto del día, repartido a lo largo del día.
+ *
+ * El cron pasa cada media hora, así que con el tope diario a secas las primeras
+ * cinco vueltas se lo gastaban entero antes del amanecer y no quedaba nada para
+ * las veintiuna horas siguientes: una campaña que se quedaba seca a media tarde
+ * no podía reponer hasta el día siguiente.
+ *
+ * Se libera en proporción a lo que va del día, con un mínimo para que a primera
+ * hora ya se pueda hacer algo. Es la misma idea que un cubo con goteo, sin
+ * necesidad de guardar estado.
+ */
+function presupuestoHastaAhora(topeDiario: number, ahora: Date): number {
+  const minutos = ahora.getHours() * 60 + ahora.getMinutes();
+  const proporcional = Math.ceil((topeDiario * minutos) / (24 * 60));
+  return Math.max(MINIMO_POR_ARRANQUE, Math.min(topeDiario, proporcional));
+}
+
+/** Con esto se arranca el día sin esperar a que el reloj libere presupuesto. */
+const MINIMO_POR_ARRANQUE = 4;
+
+/**
  * Rellena la cola de leads cuando se está quedando vacía.
  *
  * Lo llama n8n en cada vuelta de W1. La idea es que el sistema no se pare nunca:
@@ -143,7 +164,10 @@ export async function POST() {
         // El presupuesto del día se comparte: lo que ya ha gastado otra empresa
         // en esta misma vuelta cuenta para todas.
         busquedasAutomaticasHoy: Number(busquedasHoy) + lanzadas.length,
-        maxBusquedasDia: globales.autoProspectMaxSearchesPerDay,
+        maxBusquedasDia: presupuestoHastaAhora(
+          globales.autoProspectMaxSearchesPerDay,
+          new Date(),
+        ),
         minLeads: ajustes.autoProspectMinLeads,
       });
 
@@ -168,7 +192,7 @@ export async function POST() {
         ajustes,
         estados,
         lanzadas,
-        globales.autoProspectMaxSearchesPerDay,
+        presupuestoHastaAhora(globales.autoProspectMaxSearchesPerDay, new Date()),
         inicioDelDia,
         fallidas,
       );

@@ -90,6 +90,56 @@ prueba('el plan NO contiene ningún dato de cupo de envío', () => {
   }
 })
 
+/* ---- Goteo del presupuesto diario ---------------------------------------- */
+/* Copia de la función de app/api/prospect/replenish/route.ts. Si cambia allí y
+   no aquí, esta prueba deja de significar nada: por eso comprueba propiedades
+   (nunca pasarse, ser creciente) y no números concretos. */
+const MINIMO_POR_ARRANQUE = 4
+function presupuestoHastaAhora(topeDiario: number, ahora: Date): number {
+  const minutos = ahora.getHours() * 60 + ahora.getMinutes()
+  const proporcional = Math.ceil((topeDiario * minutos) / (24 * 60))
+  return Math.max(MINIMO_POR_ARRANQUE, Math.min(topeDiario, proporcional))
+}
+
+const alas = (h: number, m = 0) => new Date(2026, 7, 24, h, m)
+
+prueba('el goteo nunca supera el tope del día', () => {
+  for (let h = 0; h < 24; h++) {
+    assert.ok(
+      presupuestoHastaAhora(20, alas(h)) <= 20,
+      `a las ${h}:00 el goteo ofrecía más presupuesto que el tope diario`,
+    )
+  }
+})
+
+prueba('el goteo crece a lo largo del día y llega al tope', () => {
+  let anterior = 0
+  for (let h = 0; h < 24; h++) {
+    const ahora = presupuestoHastaAhora(20, alas(h))
+    assert.ok(ahora >= anterior, `el presupuesto bajó entre las ${h - 1}:00 y las ${h}:00`)
+    anterior = ahora
+  }
+  assert.equal(presupuestoHastaAhora(20, alas(23, 59)), 20, 'al final del día no se libera todo')
+})
+
+prueba('a primera hora se puede arrancar aunque el reloj no haya liberado nada', () => {
+  assert.equal(
+    presupuestoHastaAhora(20, alas(0, 1)),
+    MINIMO_POR_ARRANQUE,
+    'a las 00:01 el sistema se quedaría sin poder buscar nada',
+  )
+})
+
+prueba('un tope pequeño no se infla por el mínimo de arranque', () => {
+  // Con un tope de 2, el mínimo de arranque no puede autorizar 4 búsquedas.
+  assert.ok(
+    presupuestoHastaAhora(2, alas(12)) <= Math.max(2, MINIMO_POR_ARRANQUE),
+    'el mínimo de arranque se salta un tope diario muy bajo',
+  )
+})
+
+
+
 console.log(`\n${ok} comprobaciones correctas`)
 if (fallos.length) {
   console.error(`\n${fallos.length} FALLOS:\n`)
