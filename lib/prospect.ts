@@ -367,7 +367,16 @@ export function construirEntrada(
 /* -------------------------------------------------------------------------- */
 
 export type CandidatoNormalizado = {
-  fullName: string;
+  fullName: string
+  /**
+   * Los hechos observables que sirven para decidir si encaja.
+   *
+   * Sin esto, el puntuador solo veía nombre, titular, empresa y ubicación, y
+   * escribía "sin datos de reseñas" sobre un local con 1.914. El dato estaba en
+   * `raw`, pero `raw` no entra en el prompt: es enorme y lleno de ruido. Aquí va
+   * lo poco que de verdad discrimina, ya en texto.
+   */
+  senales: string[];
   headline: string | null;
   company: string | null;
   location: string | null;
@@ -406,6 +415,14 @@ export function normalizarCandidato(
 
     return {
       fullName: nombre,
+      senales: [
+        raw.connectionsCount ? `${raw.connectionsCount} contactos` : "",
+        raw.followerCount ? `${raw.followerCount} seguidores` : "",
+        texto(raw.currentPosition?.[0]?.companyIndustry, raw.industry),
+        raw.currentPosition?.[0]?.companyStaffCountRange
+          ? `plantilla ${raw.currentPosition[0].companyStaffCountRange}`
+          : "",
+      ].filter((x): x is string => Boolean(x)),
       headline: texto(raw.headline, raw.title, raw.occupation),
       company: texto(
         raw.currentPosition?.[0]?.companyName,
@@ -435,8 +452,31 @@ export function normalizarCandidato(
     const correo = texto(correos[0], raw.email, raw.contactEmail);
     if (!nombre || !correo) return null;
 
+    const horas = Array.isArray(raw.openingHours) ? raw.openingHours : []
+    // Un horario con dos tramos ("10 AM to 2 PM, 5 to 9 PM") es servicio de
+    // comidas y cenas, que es la señal más fiable de que hay equipo de sala.
+    const partido = horas.some((h: { hours?: string }) => (h?.hours ?? "").includes(","))
+    const abiertos = horas.filter(
+      (h: { hours?: string }) => (h?.hours ?? "").toLowerCase() !== "cerrado",
+    ).length
+
     return {
       fullName: nombre,
+      senales: [
+        raw.reviewsCount ? `${raw.reviewsCount} reseñas en Google` : "sin reseñas",
+        raw.totalScore ? `nota ${raw.totalScore}` : "",
+        Array.isArray(raw.categories) && raw.categories.length
+          ? `categorías: ${raw.categories.slice(0, 4).join(", ")}`
+          : "",
+        horas.length ? `abre ${abiertos} días/semana${partido ? ", horario partido" : ""}` : "",
+        raw.website ? `web propia: ${raw.website}` : "sin web",
+        Array.isArray(raw.instagrams) && raw.instagrams.length ? "tiene Instagram" : "",
+        Array.isArray(raw.emails) && raw.emails.length > 3
+          ? `${raw.emails.length} correos distintos en su web (indicio de plantilla)`
+          : "",
+        raw.claimThisBusiness === false ? "ficha reclamada por el negocio" : "",
+        raw.permanentlyClosed ? "CERRADO PERMANENTEMENTE" : "",
+      ].filter((x): x is string => Boolean(x)),
       headline: texto(raw.categoryName, raw.category, raw.subTitle),
       company: nombre,
       location: texto(raw.city, raw.address, raw.neighborhood),
@@ -455,6 +495,13 @@ export function normalizarCandidato(
   if (!usuario) return null;
   return {
     fullName: texto(raw.fullName, raw.name, raw.ownerFullName) ?? usuario,
+    senales: [
+      raw.followersCount ? `${raw.followersCount} seguidores` : "",
+      raw.postsCount ? `${raw.postsCount} publicaciones` : "",
+      raw.verified ? "cuenta verificada" : "",
+      raw.isBusinessAccount ? "cuenta de empresa" : "",
+      texto(raw.externalUrl, raw.website) ? `web: ${texto(raw.externalUrl, raw.website)}` : "sin web",
+    ].filter((x): x is string => Boolean(x)),
     headline: texto(raw.biography, raw.bio),
     company: texto(raw.businessCategoryName, raw.categoryName),
     location: texto(raw.city, raw.locationName),
@@ -529,6 +576,7 @@ export async function puntuarCandidatos(
           c.headline ? `Titular: ${c.headline}` : "",
           c.company ? `Empresa: ${c.company}` : "",
           c.location ? `Ubicación: ${c.location}` : "",
+          c.senales.length ? `Señales: ${c.senales.join(" · ")}` : "",
         ]
           .filter(Boolean)
           .join("\n"),
@@ -546,6 +594,9 @@ export async function puntuarCandidatos(
             "",
             "Un descalificador del ICP fuerza no_encaja y score por debajo de 20, por muy bien que encaje en lo demás.",
             'Si el perfil no da información suficiente para decidir, es "dudoso": no lo apruebes por si acaso.',
+            'Pero "Señales" ES información: úsala. Un local con muchas reseñas, horario partido y web propia',
+            "cumple los indicios de tamaño aunque nadie diga cuántos empleados tiene. No pidas un dato que",
+            "esta fuente nunca da; decide con los indicios que el propio ICP te indica cómo leer.",
             "Sé duro. Estos candidatos van a recibir un mensaje de una persona real.",
           ].join("\n"),
         },
