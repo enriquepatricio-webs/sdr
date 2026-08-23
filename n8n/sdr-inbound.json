@@ -1,539 +1,425 @@
 {
-  "name": "sdr-inbound",
+  "name": "SDR · 2 · Conversación entrante",
   "nodes": [
     {
+      "id": "1fffb141-a0c5-4dd8-8eda-709440caaf47",
+      "name": "Webhook de Unipile",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
       "parameters": {
         "httpMethod": "POST",
-        "path": "unipile-inbound",
+        "path": "sdr-unipile-inbound",
         "responseMode": "onReceived",
         "options": {}
       },
-      "id": "webhook",
-      "name": "Webhook de Unipile",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [
-        260,
-        200
-      ],
-      "webhookId": "unipile-inbound"
+      "webhookId": "6762fda6-28c7-41c7-845c-98eed0ed517e"
     },
     {
-      "parameters": {
-        "jsCode": "// Unipile mete NUESTROS propios mensajes en message_received. Sin esta\n// comprobación el agente lee su mensaje como si fuera una respuesta del\n// prospecto, contesta, y entra en bucle sobre un hilo con una persona real.\nconst p = $input.first().json.body ?? $input.first().json;\nconst nuestroUserId = p.account_info?.user_id;\nconst remitente = p.sender?.attendee_provider_id ?? null;\nreturn [{ json: {\n  esNuestro: Boolean(nuestroUserId && remitente && nuestroUserId === remitente),\n  esMensaje: !p.event || p.event === \"message_received\",\n  messageId: p.message_id, chatId: p.chat_id, accountId: p.account_id,\n  texto: p.message ?? \"\", providerId: remitente,\n  nombre: p.sender?.attendee_name ?? null,\n} }];"
-      },
-      "id": "interpretar",
+      "id": "8a9c8d0c-ae99-492d-bb40-65b5b25417d9",
       "name": "Interpretar webhook",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        480,
-        200
-      ]
+        220,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const raw = $input.first().json;\nconst p = raw.body ?? raw;\nconst nuestroUserId = p.account_info?.user_id;\nconst remitente = p.sender?.attendee_provider_id ?? null;\nreturn [{ json: {\n  esNuestro: Boolean(nuestroUserId && remitente && nuestroUserId === remitente),\n  esMensaje: !p.event || p.event === \"message_received\",\n  messageId: p.message_id ?? null,\n  chatId: p.chat_id ?? null,\n  accountId: p.account_id ?? null,\n  texto: p.message ?? \"\",\n  providerId: remitente,\n  nombre: p.sender?.attendee_name ?? null,\n} }];"
+      }
     },
     {
+      "id": "a6e664d4-7739-4dd9-b88a-9b429975c1c2",
+      "name": "Lo escribió el prospecto",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        440,
+        0
+      ],
       "parameters": {
         "conditions": {
           "options": {
             "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
             "version": 2
           },
           "conditions": [
             {
               "leftValue": "={{ $json.esNuestro }}",
-              "rightValue": false,
+              "rightValue": "",
               "operator": {
                 "type": "boolean",
-                "operation": "false"
+                "operation": "false",
+                "singleValue": true
               }
             },
             {
               "leftValue": "={{ $json.esMensaje }}",
-              "rightValue": true,
+              "rightValue": "",
               "operator": {
                 "type": "boolean",
-                "operation": "true"
+                "operation": "true",
+                "singleValue": true
               }
             }
           ],
           "combinator": "and"
         }
-      },
-      "id": "es-del-prospecto",
-      "name": "¿Lo ha escrito el prospecto?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        700,
-        200
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "https://sdr.thecotocompany.com/api/touches",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "options": {
-          "timeout": 120000
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ leadId: $('Resolver lead').item.json.lead.id, channel: $('Resolver lead').item.json.campana.channel, direction: \"in\", status: \"enviado\", sentAt: new Date().toISOString(), body: $('Interpretar webhook').item.json.texto, unipileMessageId: $('Interpretar webhook').item.json.messageId, unipileChatId: $('Interpretar webhook').item.json.chatId }) }}"
-      },
-      "id": "registrar-entrante",
-      "name": "Registrar entrante",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        920,
-        200
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "REEMPLAZAR",
-          "name": "SDR API (x-api-key)"
-        }
       }
     },
     {
+      "id": "88dc5420-3bb8-4982-aec3-5a4c436cb541",
+      "name": "Resolver lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        660,
+        0
+      ],
       "parameters": {
         "method": "GET",
         "url": "=https://sdr.thecotocompany.com/api/leads/resolve?chat_id={{ $json.chatId }}&provider_id={{ $json.providerId }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {
-          "timeout": 120000
-        }
-      },
-      "id": "resolver-lead",
-      "name": "Resolver lead",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        920,
-        360
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "REEMPLAZAR",
-          "name": "SDR API (x-api-key)"
+          "timeout": 60000
         }
       }
     },
     {
+      "id": "678537d7-284d-41b9-b2d5-50237a6aa11b",
+      "name": "Registrar entrante",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://sdr.thecotocompany.com/api/touches",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={ \"leadId\": \"{{ $json.lead.id }}\", \"channel\": \"{{ $json.campana.channel }}\", \"direction\": \"in\", \"status\": \"enviado\", \"sentAt\": \"{{ $now.toISO() }}\", \"body\": {{ JSON.stringify($(\"Interpretar webhook\").item.json.texto) }}, \"unipileMessageId\": \"{{ $(\"Interpretar webhook\").item.json.messageId }}\", \"unipileChatId\": \"{{ $(\"Interpretar webhook\").item.json.chatId }}\" }",
+        "options": {
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "id": "9a059769-e5e0-4249-aafa-ae59154ac2de",
+      "name": "Nuevo y no congelado",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1100,
+        0
+      ],
       "parameters": {
         "conditions": {
           "options": {
             "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
             "version": 2
           },
           "conditions": [
             {
               "leftValue": "={{ $json.duplicado }}",
-              "rightValue": false,
+              "rightValue": "",
               "operator": {
                 "type": "boolean",
-                "operation": "false"
+                "operation": "false",
+                "singleValue": true
               }
             },
             {
-              "leftValue": "={{ $('Resolver lead').item.json.congelado }}",
-              "rightValue": false,
+              "leftValue": "={{ $(\"Resolver lead\").item.json.congelado }}",
+              "rightValue": "",
               "operator": {
                 "type": "boolean",
-                "operation": "false"
+                "operation": "false",
+                "singleValue": true
               }
             }
           ],
           "combinator": "and"
         }
-      },
-      "id": "procede",
-      "name": "¿Nuevo y no congelado?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        1140,
-        200
-      ]
+      }
     },
     {
+      "id": "c8b54ffc-e337-4cd8-b6c0-40a524ae3c15",
+      "name": "Playbook activo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1320,
+        0
+      ],
       "parameters": {
         "method": "GET",
-        "url": "=https://sdr.thecotocompany.com/api/playbook/active?campaign_id={{ $('Resolver lead').item.json.campana.id }}",
+        "url": "=https://sdr.thecotocompany.com/api/playbook/active?campaign_id={{ $(\"Resolver lead\").item.json.campana.id }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {
-          "timeout": 120000
-        }
-      },
-      "id": "playbook-activo",
-      "name": "Playbook activo",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1360,
-        200
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "REEMPLAZAR",
-          "name": "SDR API (x-api-key)"
+          "timeout": 60000
         }
       }
     },
     {
+      "id": "1c495861-00cc-4004-933e-009bf5129fe2",
+      "name": "Agente SDR",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1540,
+        0
+      ],
       "parameters": {
         "promptType": "define",
-        "text": "={{ \"El prospecto acaba de escribir:\\n\\n«\" + $('Interpretar webhook').item.json.texto + \"»\\n\\nDatos del lead (leadId para las tools: \" + $('Resolver lead').item.json.lead.id + \", chatId: \" + $('Interpretar webhook').item.json.chatId + \"):\\n\" + JSON.stringify({ nombre: $('Resolver lead').item.json.lead.fullName, titular: $('Resolver lead').item.json.lead.headline, empresa: $('Resolver lead').item.json.lead.company, score: $('Resolver lead').item.json.lead.score }) + \"\\n\\nConversación hasta ahora:\\n\" + $('Resolver lead').item.json.hilo.map(m => m.quien + \": \" + m.texto).join(\"\\n\") + \"\\n\\nDecide y actúa usando las herramientas. Responde SIEMPRE con la tool responder, nunca solo con texto.\" }}",
+        "text": "=El prospecto acaba de escribir:\n\n«{{ $(\"Interpretar webhook\").item.json.texto }}»\n\nleadId para las herramientas: {{ $(\"Resolver lead\").item.json.lead.id }}\nchatId: {{ $(\"Interpretar webhook\").item.json.chatId }}\n\nDatos del lead: {{ JSON.stringify($(\"Resolver lead\").item.json.lead) }}\n\nConversación hasta ahora:\n{{ ($(\"Resolver lead\").item.json.hilo || []).map(m => m.quien + \": \" + m.texto).join(\" | \") }}\n\nDecide y actúa con las herramientas. Responde SIEMPRE llamando a la herramienta responder, nunca solo con texto.",
         "options": {
           "systemMessage": "={{ $json.systemPrompt }}",
           "maxIterations": 12
         }
-      },
-      "id": "agente-2",
-      "name": "Agente SDR",
-      "type": "@n8n/n8n-nodes-langchain.agent",
-      "typeVersion": 1.7,
-      "position": [
-        1580,
-        200
-      ]
+      }
     },
     {
-      "parameters": {
-        "model": "={{ $json.modelo || \"anthropic/claude-sonnet-5\" }}",
-        "options": {
-          "temperature": 0.7
-        }
-      },
-      "id": "openrouter",
+      "id": "247ac762-8074-417b-ac5a-cd049a03451f",
       "name": "OpenRouter",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
       "typeVersion": 1,
       "position": [
-        1580,
-        360
+        1540,
+        280
       ],
-      "credentials": {
-        "openRouterApi": {
-          "id": "REEMPLAZAR",
-          "name": "OpenRouter"
+      "parameters": {
+        "model": "deepseek/deepseek-v4-flash",
+        "options": {
+          "temperature": 0.6,
+          "maxTokens": 8000
         }
       }
     },
     {
+      "id": "d3ed77a8-167d-49f2-8ad0-8ccceb5d7e59",
+      "name": "Memoria del hilo",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [
+        1740,
+        280
+      ],
       "parameters": {
         "sessionIdType": "customKey",
         "sessionKey": "={{ $('Interpretar webhook').item.json.chatId }}",
         "contextWindowLength": 20
-      },
-      "id": "memoria",
-      "name": "Memoria del hilo",
-      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
-      "typeVersion": 1.3,
-      "position": [
-        1360,
-        520
-      ]
+      }
     },
     {
+      "id": "7874e4d3-458e-4471-93ab-8f57a7697b9d",
+      "name": "registrar_cualificacion",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
+      "position": [
+        1960,
+        -320
+      ],
       "parameters": {
-        "toolDescription": "Guarda el resultado de la cualificación del prospecto. OBLIGATORIO llamarla antes de intentar agendar. score de 0 a 100, verdict \"cualificado\" | \"descartado\" | \"pendiente\", reasoning explicando en qué te basas y summary en una línea.",
+        "toolDescription": "Guarda el resultado de la cualificación del prospecto. OBLIGATORIA antes de intentar agendar: sin ella, agendar_reunion devuelve 409.",
         "method": "POST",
-        "url": "https://sdr.thecotocompany.com/api/leads/{leadId}/status",
+        "url": "=https://sdr.thecotocompany.com/api/leads/{{ $fromAI('leadId','Id del lead','string') }}/status",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
+        "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={\"status\": \"{estado}\", \"qualification\": {\"score\": {score}, \"verdict\": \"{verdict}\", \"reasoning\": \"{reasoning}\", \"summary\": \"{summary}\"}}",
-        "placeholderDefinitions": {
-          "values": [
-            {
-              "name": "leadId",
-              "description": "Id del lead",
-              "type": "string"
-            },
-            {
-              "name": "estado",
-              "description": "cualificando, cualificado o descartado",
-              "type": "string"
-            },
-            {
-              "name": "score",
-              "description": "Encaje con el ICP de 0 a 100",
-              "type": "number"
-            },
-            {
-              "name": "verdict",
-              "description": "cualificado, descartado o pendiente",
-              "type": "string"
-            },
-            {
-              "name": "reasoning",
-              "description": "Por qué, con la señal concreta en la que te basas",
-              "type": "string"
-            },
-            {
-              "name": "summary",
-              "description": "Una línea para el aviso de Telegram",
-              "type": "string"
+        "jsonBody": "={ \"status\": {{ JSON.stringify($fromAI('estado','cualificando, cualificado o descartado','string')) }}, \"qualification\": { \"score\": {{ $fromAI('score','Encaje con el ICP de 0 a 100','number') }}, \"verdict\": {{ JSON.stringify($fromAI('verdict','cualificado, descartado o pendiente','string')) }}, \"reasoning\": {{ JSON.stringify($fromAI('reasoning','Senal concreta en la que te basas','string')) }}, \"summary\": {{ JSON.stringify($fromAI('summary','Una linea para el aviso de Telegram','string')) }} } }",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true
             }
-          ]
-        }
-      },
-      "id": "tool-registrar_cualificacion",
-      "name": "registrar_cualificacion",
-      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
-      "typeVersion": 1.1,
-      "position": [
-        1800,
-        520
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "REEMPLAZAR",
-          "name": "SDR API (x-api-key)"
+          }
         }
       }
     },
     {
+      "id": "5b133561-24fd-4a5e-84fd-948924b76539",
+      "name": "consultar_disponibilidad",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
+      "position": [
+        1960,
+        -160
+      ],
       "parameters": {
-        "toolDescription": "Devuelve huecos REALES de la agenda ya filtrados por las reglas del playbook. OBLIGATORIO llamarla antes de proponer cualquier hora. Si devuelve error con escala:true, di que confirmas en un rato y llama a escalar_humano; no propongas nada.",
+        "toolDescription": "Huecos REALES de la agenda, ya filtrados por las reglas del playbook. OBLIGATORIA antes de proponer cualquier hora. Si responde con escala true, di que confirmas en un rato y llama a escalar_humano; no propongas nada.",
         "method": "POST",
         "url": "https://sdr.thecotocompany.com/api/calendar/slots",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
+        "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={\"leadId\": \"{leadId}\", \"preferencia\": \"{preferencia}\"}",
-        "placeholderDefinitions": {
-          "values": [
-            {
-              "name": "leadId",
-              "description": "Id del lead",
-              "type": "string"
-            },
-            {
-              "name": "preferencia",
-              "description": "manana, tarde o cualquiera, según lo que haya dicho el prospecto",
-              "type": "string"
+        "jsonBody": "={ \"leadId\": {{ JSON.stringify($fromAI('leadId','Id del lead','string')) }}, \"preferencia\": {{ JSON.stringify($fromAI('preferencia','manana, tarde o cualquiera segun lo que haya dicho el prospecto','string')) }} }",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true
             }
-          ]
-        }
-      },
-      "id": "tool-consultar_disponibilidad",
-      "name": "consultar_disponibilidad",
-      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
-      "typeVersion": 1.1,
-      "position": [
-        2020,
-        520
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "REEMPLAZAR",
-          "name": "SDR API (x-api-key)"
+          }
         }
       }
     },
     {
+      "id": "a5b92199-8e22-4806-bc2b-cdf96edc4ec9",
+      "name": "agendar_reunion",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
+      "position": [
+        1960,
+        0
+      ],
       "parameters": {
-        "toolDescription": "Crea la reunión en el calendario con el prospecto invitado y enlace de Meet. Solo funciona si el score guardado llega al umbral: si no, devuelve 409. Usa una hora que te haya devuelto consultar_disponibilidad, nunca una inventada.",
+        "toolDescription": "Crea la reunión en el calendario con el prospecto invitado y enlace de Meet. Usa una hora que te haya devuelto consultar_disponibilidad, nunca una inventada.",
         "method": "POST",
         "url": "https://sdr.thecotocompany.com/api/calendar/book",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
+        "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={\"leadId\": \"{leadId}\", \"inicio\": \"{inicio}\"}",
-        "placeholderDefinitions": {
-          "values": [
-            {
-              "name": "leadId",
-              "description": "Id del lead",
-              "type": "string"
-            },
-            {
-              "name": "inicio",
-              "description": "Inicio en ISO 8601, tal cual lo devolvió consultar_disponibilidad",
-              "type": "string"
+        "jsonBody": "={ \"leadId\": {{ JSON.stringify($fromAI('leadId','Id del lead','string')) }}, \"inicio\": {{ JSON.stringify($fromAI('inicio','Inicio en ISO 8601 tal cual lo devolvio consultar_disponibilidad','string')) }} }",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true
             }
-          ]
-        }
-      },
-      "id": "tool-agendar_reunion",
-      "name": "agendar_reunion",
-      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
-      "typeVersion": 1.1,
-      "position": [
-        2240,
-        520
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "REEMPLAZAR",
-          "name": "SDR API (x-api-key)"
+          }
         }
       }
     },
     {
+      "id": "c35fae66-c7bd-4a10-b88d-1ba7080c12bd",
+      "name": "responder",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
+      "position": [
+        1960,
+        160
+      ],
       "parameters": {
-        "toolDescription": "Envía un mensaje al prospecto en el mismo hilo. Máximo 4 líneas. Si el autopiloto está apagado guarda el borrador y no envía: es lo esperado, no un error.",
+        "toolDescription": "Envía un mensaje al prospecto en el mismo hilo. Máximo 4 líneas. Con el autopiloto apagado guarda el borrador y no envía: eso es lo esperado, no un error. Si la respuesta trae un campo error, LÉELO: no vuelvas a llamar a esta herramienta con lo mismo. Si dice que la cuenta está en pausa o desconectada, llama a escalar_humano y para.",
         "method": "POST",
         "url": "https://sdr.thecotocompany.com/api/messages/send",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
+        "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={\"leadId\": \"{leadId}\", \"texto\": \"{texto}\", \"chatId\": \"{chatId}\", \"tipo\": \"mensaje\"}",
-        "placeholderDefinitions": {
-          "values": [
-            {
-              "name": "leadId",
-              "description": "Id del lead",
-              "type": "string"
-            },
-            {
-              "name": "texto",
-              "description": "El mensaje, tal cual se lo va a leer el prospecto",
-              "type": "string"
-            },
-            {
-              "name": "chatId",
-              "description": "Id del hilo de Unipile",
-              "type": "string"
+        "jsonBody": "={ \"leadId\": {{ JSON.stringify($fromAI('leadId','Id del lead','string')) }}, \"texto\": {{ JSON.stringify($fromAI('texto','El mensaje tal cual se lo va a leer el prospecto. Puede llevar saltos de linea','string')) }}, \"chatId\": {{ JSON.stringify($fromAI('chatId','Id del hilo de Unipile','string')) }}, \"tipo\": \"mensaje\" }",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true
             }
-          ]
-        }
-      },
-      "id": "tool-responder",
-      "name": "responder",
-      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
-      "typeVersion": 1.1,
-      "position": [
-        1800,
-        680
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "REEMPLAZAR",
-          "name": "SDR API (x-api-key)"
+          }
         }
       }
     },
     {
+      "id": "9ce5b45a-08ed-4d5f-bc55-d006596be1a6",
+      "name": "descartar",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
+      "position": [
+        1960,
+        320
+      ],
       "parameters": {
-        "toolDescription": "Cierra el lead sin reunión. Usa no_interesado si ha dicho que no, descartado si no encaja con el ICP. Si ha pedido no ser contactado, motivo \"baja solicitada\" y no le escribas nada más.",
+        "toolDescription": "Cierra el lead sin reunión. Usa no_interesado si ha dicho que no, descartado si no encaja con el ICP. Si pide no ser contactado, motivo baja solicitada y no le escribas nada más.",
         "method": "POST",
-        "url": "https://sdr.thecotocompany.com/api/leads/{leadId}/status",
+        "url": "=https://sdr.thecotocompany.com/api/leads/{{ $fromAI('leadId','Id del lead','string') }}/status",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
+        "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={\"status\": \"{estado}\", \"motivo\": \"{motivo}\"}",
-        "placeholderDefinitions": {
-          "values": [
-            {
-              "name": "leadId",
-              "description": "Id del lead",
-              "type": "string"
-            },
-            {
-              "name": "estado",
-              "description": "no_interesado o descartado",
-              "type": "string"
-            },
-            {
-              "name": "motivo",
-              "description": "Por qué se cierra",
-              "type": "string"
+        "jsonBody": "={ \"status\": {{ JSON.stringify($fromAI('estado','no_interesado o descartado','string')) }}, \"motivo\": {{ JSON.stringify($fromAI('motivo','Por que se cierra','string')) }} }",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true
             }
-          ]
-        }
-      },
-      "id": "tool-descartar",
-      "name": "descartar",
-      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
-      "typeVersion": 1.1,
-      "position": [
-        2020,
-        680
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "REEMPLAZAR",
-          "name": "SDR API (x-api-key)"
+          }
         }
       }
     },
     {
+      "id": "9ff2418d-3943-4529-a04b-f4f4d7837b6a",
+      "name": "escalar_humano",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
+      "position": [
+        1960,
+        480
+      ],
       "parameters": {
-        "toolDescription": "Congela el lead y avisa por Telegram. Úsala ante enfado, confusión, una queja, una petición legal, o cualquier cosa fuera del guion. Después de llamarla no vuelvas a escribir a ese prospecto.",
+        "toolDescription": "Congela el lead y avisa por Telegram. Úsala ante enfado, confusión, una queja, una petición legal o cualquier cosa fuera del guion. Después de llamarla no vuelvas a escribir a ese prospecto.",
         "method": "POST",
         "url": "https://sdr.thecotocompany.com/api/notify",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
+        "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={\"tipo\": \"escalado\", \"leadId\": \"{leadId}\", \"motivo\": \"{motivo}\", \"ultimoMensaje\": \"{ultimoMensaje}\"}",
-        "placeholderDefinitions": {
-          "values": [
-            {
-              "name": "leadId",
-              "description": "Id del lead",
-              "type": "string"
-            },
-            {
-              "name": "motivo",
-              "description": "Qué ha pasado, en una frase",
-              "type": "string"
-            },
-            {
-              "name": "ultimoMensaje",
-              "description": "Lo último que dijo el prospecto",
-              "type": "string"
+        "jsonBody": "={ \"tipo\": \"escalado\", \"leadId\": {{ JSON.stringify($fromAI('leadId','Id del lead','string')) }}, \"motivo\": {{ JSON.stringify($fromAI('motivo','Que ha pasado en una frase','string')) }}, \"ultimoMensaje\": {{ JSON.stringify($fromAI('ultimoMensaje','Lo ultimo que dijo el prospecto','string')) }} }",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true
             }
-          ]
-        }
-      },
-      "id": "tool-escalar_humano",
-      "name": "escalar_humano",
-      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
-      "typeVersion": 1.1,
-      "position": [
-        2240,
-        680
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "REEMPLAZAR",
-          "name": "SDR API (x-api-key)"
+          }
         }
       }
     },
     {
-      "parameters": {},
-      "id": "eco",
-      "name": "Es nuestro: ignorar",
-      "type": "n8n-nodes-base.noOp",
-      "typeVersion": 1,
-      "position": [
-        920,
-        680
-      ]
-    },
-    {
-      "parameters": {},
-      "id": "dup",
+      "id": "aec2b5eb-9c83-4dbf-a7b0-4bd53094c0d4",
       "name": "Duplicado o congelado: ignorar",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
-        1360,
-        680
-      ]
+        1320,
+        240
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "00cb29d1-d59f-4e73-8778-4cd9a711b2d1",
+      "name": "Es nuestro eco: ignorar",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        660,
+        240
+      ],
+      "parameters": {}
     }
   ],
   "connections": {
@@ -552,14 +438,14 @@
       "main": [
         [
           {
-            "node": "¿Lo ha escrito el prospecto?",
+            "node": "Lo escribió el prospecto",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "¿Lo ha escrito el prospecto?": {
+    "Lo escribió el prospecto": {
       "main": [
         [
           {
@@ -570,7 +456,7 @@
         ],
         [
           {
-            "node": "Es nuestro: ignorar",
+            "node": "Es nuestro eco: ignorar",
             "type": "main",
             "index": 0
           }
@@ -592,14 +478,14 @@
       "main": [
         [
           {
-            "node": "¿Nuevo y no congelado?",
+            "node": "Nuevo y no congelado",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "¿Nuevo y no congelado?": {
+    "Nuevo y no congelado": {
       "main": [
         [
           {
@@ -718,7 +604,7 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
-  },
-  "pinData": {}
+    "executionOrder": "v1",
+    "availableInMCP": true
+  }
 }

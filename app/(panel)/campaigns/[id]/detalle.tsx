@@ -12,7 +12,7 @@ type Campana = {
   accountId: string | null
   playbookId: string | null
   icpId: string | null
-  sellerId: string | null
+  workspaceId: string | null
   dailyCap: number
   maxTouches: number
   followupDelays: number[]
@@ -58,7 +58,7 @@ export function DetalleCampana({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: c.name, channel: c.channel, accountId: c.accountId,
-          playbookId: c.playbookId, icpId: c.icpId, sellerId: c.sellerId, dailyCap: c.dailyCap,
+          playbookId: c.playbookId, icpId: c.icpId, workspaceId: c.workspaceId, dailyCap: c.dailyCap,
           maxTouches: c.maxTouches, followupDelays: c.followupDelays, sendingWindow: c.sendingWindow,
         }),
       })
@@ -186,8 +186,8 @@ export function DetalleCampana({
             <label htmlFor="empresa" className="etiqueta">Empresa para la que se vende</label>
             <select
               id="empresa"
-              value={c.sellerId ?? ''}
-              onChange={(e) => setC({ ...c, sellerId: e.target.value || null })}
+              value={c.workspaceId ?? ''}
+              onChange={(e) => setC({ ...c, workspaceId: e.target.value || null })}
               className={`${entrada} mt-1.5`}
             >
               <option value="">— sin empresa —</option>

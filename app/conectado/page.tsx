@@ -26,7 +26,7 @@ export default async function Conectado({
           <>
             <h1 className="mt-6 text-xl font-semibold">Cuenta conectada</h1>
             <p className="mt-2 text-sm text-apagado">
-              Vuelve a Ajustes y pulsa <strong>Sincronizar</strong> para traerla. Entrará en
+              Vuelve a tu empresa y pulsa <strong>Sincronizar</strong> para traerla. Entrará en
               pausa: activarla es una decisión aparte.
             </p>
           </>
@@ -35,16 +35,16 @@ export default async function Conectado({
             <h1 className="mt-6 text-xl font-semibold">No se completó la conexión</h1>
             <p className="mt-2 text-sm text-apagado">
               El asistente de Unipile se cerró sin terminar. Puedes volver a intentarlo desde
-              Ajustes.
+              la pantalla de tu empresa.
             </p>
           </>
         )}
 
         <Link
-          href="/settings"
+          href="/empresa"
           className="mt-6 block bg-tinta py-2.5 text-center text-sm font-semibold text-lienzo"
         >
-          Volver a Ajustes
+          Volver
         </Link>
       </div>
     </div>

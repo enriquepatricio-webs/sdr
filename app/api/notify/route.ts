@@ -5,6 +5,7 @@ import { db } from '@/lib/db'
 import { leads, runLogs } from '@/lib/db/schema'
 import { parseBody, serverError } from '@/lib/api'
 import { avisar, formatearAvisoEscalado } from '@/lib/telegram'
+import { workspaceDeLead } from '@/lib/workspace'
 
 export const dynamic = 'force-dynamic'
 
@@ -51,7 +52,9 @@ export async function POST(request: Request) {
       }
     }
 
-    const resultado = await avisar(texto)
+    // El aviso va al chat de la empresa del lead, si se sabe cuál es.
+    const empresa = d.leadId ? await workspaceDeLead(d.leadId) : null
+    const resultado = await avisar(texto, empresa?.id)
     return NextResponse.json(resultado, { status: resultado.ok ? 200 : 502 })
   } catch (err) {
     return serverError(err, 'No se pudo enviar el aviso')

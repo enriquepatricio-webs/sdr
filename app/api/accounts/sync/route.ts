@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { DEFAULT_DAILY_LIMIT, DEFAULT_HOURLY_LIMIT, accounts, runLogs } from '@/lib/db/schema'
 import { serverError } from '@/lib/api'
 import { canalDeProveedor, listarCuentas } from '@/lib/unipile'
+import { obtenerWorkspace } from '@/lib/workspace'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -18,8 +19,15 @@ export const maxDuration = 60
  * Y los topes de una cuenta que ya existe no se tocan: si alguien los bajó a
  * mano, una sincronización no puede volver a subirlos.
  */
-export async function POST() {
+export async function POST(request: Request) {
   try {
+    // Cada cuenta pertenece a una empresa. Sin ella la clave ajena compuesta de
+    // las campañas la rechaza, así que una cuenta sin empresa es una cuenta
+    // inservible: se le asigna al entrar, no después.
+    const empresa = await obtenerWorkspace(
+      new URL(request.url).searchParams.get('workspaceId'),
+    )
+
     const remotas = await listarCuentas()
     const locales = await db.select().from(accounts)
     const porId = new Map(locales.map((a) => [a.unipileAccountId, a]))
@@ -43,6 +51,7 @@ export async function POST() {
           .insert(accounts)
           .values({
             unipileAccountId: r.id,
+            workspaceId: empresa?.id ?? null,
             provider: canal,
             displayName: r.name || `${canal} ${r.id.slice(0, 6)}`,
             dailyLimit: DEFAULT_DAILY_LIMIT,

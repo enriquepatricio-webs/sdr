@@ -1,19 +1,24 @@
 import { NextResponse } from 'next/server'
 import { serverError } from '@/lib/api'
 import { MINIMO_PARA_APRENDER, calcularResultados, obtenerMuestras } from '@/lib/insights'
-import { getSettings } from '@/lib/settings'
+import { ajustesEfectivos } from '@/lib/workspace'
 
 export const dynamic = 'force-dynamic'
 
 /** Resultados reales y lo que se ha aprendido de ellos. */
 export async function GET(request: Request) {
-  const dias = Number(new URL(request.url).searchParams.get('dias')) || 30
+  const url = new URL(request.url)
+  const dias = Number(url.searchParams.get('dias')) || 30
+  const workspaceId = url.searchParams.get('workspaceId')
   try {
     const desde = new Date(Date.now() - dias * 24 * 3600_000)
-    const [resultados, muestras, ajustes] = await Promise.all([
+    const ajustes = await ajustesEfectivos(workspaceId)
+    // Las muestras se cuentan de esta empresa: es sobre las suyas sobre las que
+    // podrá aprender, y decirle que ya tiene volumen contando las de otra sería
+    // mentirle.
+    const [resultados, muestras] = await Promise.all([
       calcularResultados(desde),
-      obtenerMuestras(),
-      getSettings(),
+      obtenerMuestras(200, ajustes.workspace?.id),
     ])
 
     return NextResponse.json({

@@ -1,0 +1,172 @@
+/**
+ * Pruebas del imán de Instagram. `npm run test:imanes`.
+ *
+ * Se prueban las tres cosas que, si fallan, le escriben a quien no toca: la
+ * detección de la palabra clave, las transiciones de estado y que el mismo
+ * comentario no genere dos contactos.
+ */
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import {
+  TRANSICIONES,
+  comentariosConLaClave,
+  mencionaClave,
+  normalizar,
+  normalizarUsuario,
+  pideQueLeDejen,
+  puedeTransicionar,
+  type EstadoIman,
+} from './magnets'
+import { MENCIONA_DINERO } from './sin-precios'
+
+/* ---- Palabra clave ------------------------------------------------------ */
+
+test('la palabra suelta cuenta', () => {
+  assert.equal(mencionaClave('GUIA', 'guia'), true)
+  assert.equal(mencionaClave('guia', 'GUIA'), true)
+})
+
+test('los acentos no importan, en ninguna de las dos direcciones', () => {
+  assert.equal(mencionaClave('quiero la GUÍA', 'guia'), true)
+  assert.equal(mencionaClave('quiero la guia', 'GUÍA'), true)
+  assert.equal(mencionaClave('mándame el MÉTODO', 'metodo'), true)
+})
+
+test('la palabra dentro de una frase cuenta', () => {
+  assert.equal(mencionaClave('Hola! me mandas la guia porfa?', 'guia'), true)
+  assert.equal(mencionaClave('guia, gracias', 'guia'), true)
+  assert.equal(mencionaClave('quiero la guia.', 'guia'), true)
+})
+
+test('con emojis y almohadillas pegadas también', () => {
+  assert.equal(mencionaClave('🔥GUIA🔥', 'guia'), true)
+  assert.equal(mencionaClave('#guia', 'guia'), true)
+  assert.equal(mencionaClave('@ana guia', 'guia'), true)
+})
+
+test('no cuenta si es parte de otra palabra', () => {
+  // Quien escribe "guiado" no ha pedido nada, y escribirle sería spam.
+  assert.equal(mencionaClave('me has guiado muy bien', 'guia'), false)
+  assert.equal(mencionaClave('aguia', 'guia'), false)
+})
+
+test('un comentario sin la palabra no cuenta', () => {
+  assert.equal(mencionaClave('qué bueno el video', 'guia'), false)
+  assert.equal(mencionaClave('', 'guia'), false)
+})
+
+test('una clave de varias palabras funciona', () => {
+  assert.equal(mencionaClave('quiero el PLAN 90 ya', 'plan 90'), true)
+  assert.equal(mencionaClave('quiero el plan', 'plan 90'), false)
+})
+
+test('una clave vacía no detecta a nadie', () => {
+  // Si no, un imán mal configurado escribiría a TODOS los comentaristas.
+  assert.equal(mencionaClave('lo que sea', ''), false)
+  assert.equal(mencionaClave('lo que sea', '   '), false)
+})
+
+test('normalizar quita acentos y baja a minúsculas', () => {
+  assert.equal(normalizar('ÁÉÍÓÚ Ñ'), 'aeiou n')
+})
+
+test('el usuario se guarda sin arroba y en minúsculas', () => {
+  assert.equal(normalizarUsuario('  @Ana_G '), 'ana_g')
+  assert.equal(normalizarUsuario('ANA'), 'ana')
+})
+
+/* ---- Un comentario, un contacto ----------------------------------------- */
+
+const COMENTARIOS = [
+  { id: 'c1', text: 'GUIA', ownerUsername: 'Ana', owner: { full_name: 'Ana G' } },
+  { id: 'c2', text: 'guia porfa!!', ownerUsername: '@ana' },
+  { id: 'c3', text: 'guía', ownerUsername: 'ANA' },
+  { id: 'c4', text: 'qué crack', ownerUsername: 'beto' },
+  { id: 'c5', text: 'me mandas la guia?', ownerUsername: 'carla' },
+]
+
+test('la misma persona comentando tres veces es UN contacto', () => {
+  const r = comentariosConLaClave(COMENTARIOS, 'guia')
+  assert.equal(r.length, 2)
+  assert.deepEqual(r.map((c) => c.username), ['ana', 'carla'])
+})
+
+test('gana el primer comentario de esa persona, con su nombre', () => {
+  const r = comentariosConLaClave(COMENTARIOS, 'guia')
+  assert.equal(r[0].commentId, 'c1')
+  assert.equal(r[0].fullName, 'Ana G')
+})
+
+test('quien no dijo la palabra no entra', () => {
+  const r = comentariosConLaClave(COMENTARIOS, 'guia')
+  assert.ok(!r.some((c) => c.username === 'beto'))
+})
+
+test('un comentario sin autor se ignora en vez de romper', () => {
+  const r = comentariosConLaClave([{ id: 'x', text: 'guia' }], 'guia')
+  assert.equal(r.length, 0)
+})
+
+/* ---- Máquina de estados -------------------------------------------------- */
+
+const VALIDAS: [EstadoIman, EstadoIman][] = [
+  ['detectado', 'pidiendo_follow'],
+  ['pidiendo_follow', 'verificado'],
+  ['verificado', 'entregado'],
+  ['entregado', 'en_conversacion'],
+]
+
+test('el embudo avanza paso a paso', () => {
+  for (const [desde, hasta] of VALIDAS) {
+    assert.equal(puedeTransicionar(desde, hasta), true, `${desde} → ${hasta} debería valer`)
+  }
+})
+
+test('desde cualquier estado vivo se puede descartar', () => {
+  for (const desde of ['detectado', 'pidiendo_follow', 'verificado', 'entregado', 'en_conversacion'] as const) {
+    assert.equal(puedeTransicionar(desde, 'descartado'), true, desde)
+  }
+})
+
+test('NO se entrega a quien no se ha verificado', () => {
+  assert.equal(puedeTransicionar('detectado', 'entregado'), false)
+  assert.equal(puedeTransicionar('pidiendo_follow', 'entregado'), false)
+})
+
+test('NO se verifica a quien no ha recibido la petición', () => {
+  assert.equal(puedeTransicionar('detectado', 'verificado'), false)
+})
+
+test('no se vuelve atrás', () => {
+  assert.equal(puedeTransicionar('entregado', 'verificado'), false)
+  assert.equal(puedeTransicionar('pidiendo_follow', 'detectado'), false)
+  assert.equal(puedeTransicionar('en_conversacion', 'entregado'), false)
+})
+
+test('descartado es terminal: no se le vuelve a escribir nunca', () => {
+  for (const hasta of Object.keys(TRANSICIONES) as EstadoIman[]) {
+    assert.equal(puedeTransicionar('descartado', hasta), false, `descartado → ${hasta}`)
+  }
+})
+
+test('ningún estado se transiciona a sí mismo', () => {
+  for (const estado of Object.keys(TRANSICIONES) as EstadoIman[]) {
+    assert.equal(puedeTransicionar(estado, estado), false, estado)
+  }
+})
+
+/* ---- Frenos -------------------------------------------------------------- */
+
+test('"no me escribas" para el embudo', () => {
+  assert.equal(pideQueLeDejen('por favor no me escribas más'), true)
+  assert.equal(pideQueLeDejen('DEJAME EN PAZ'), true)
+  assert.equal(pideQueLeDejen('déjame en paz'), true)
+  assert.equal(pideQueLeDejen('esto es spam'), true)
+  assert.equal(pideQueLeDejen('gracias, me lo miro'), false)
+})
+
+test('los textos del imán no pueden llevar cifras de dinero', () => {
+  assert.equal(MENCIONA_DINERO.test('te lo dejo en 300€'), true)
+  assert.equal(MENCIONA_DINERO.test('cuesta 50 dolares'), true)
+  assert.equal(MENCIONA_DINERO.test('te mando la guía por DM'), false)
+})

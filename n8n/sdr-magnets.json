@@ -1,0 +1,63 @@
+{
+  "name": "SDR · 4 · Lead magnets de Instagram",
+  "nodes": [
+    {
+      "id": "4dc8581f-d637-407b-bde2-35fd8b333013",
+      "name": "Cada 15 minutos",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "13a33eb2-83fe-4e65-8696-fea5b45cc7d9",
+      "name": "Una vuelta a los imanes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://sdr.thecotocompany.com/api/magnets/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "notes": "Lee comentarios nuevos, pide el follow, lo verifica, entrega el recurso y propone reunion. El ritmo real lo marca el tope horario de la cuenta de Instagram, no este cron.",
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Cada 15 minutos": {
+      "main": [
+        [
+          {
+            "node": "Una vuelta a los imanes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  }
+}

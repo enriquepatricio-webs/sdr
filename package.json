@@ -14,12 +14,13 @@
     "db:seed": "tsx lib/db/seed.cli.ts",
     "db:verify": "tsx lib/db/schema.test.ts",
     "test:ventana": "tsx lib/sending-window.test.ts",
-    "verify": "npm run db:verify && npm run test:ventana && npm run test:csv && npm run test:cupo && npm run test:reabastecer && npm run test:integraciones && npm run test:n8n",
+    "verify": "npm run db:verify && npm run test:ventana && npm run test:csv && npm run test:cupo && npm run test:reabastecer && npm run test:integraciones && npm run test:n8n && npm run test:imanes",
     "test:csv": "tsx lib/csv.test.ts",
     "test:integraciones": "tsx lib/integraciones.test.mts",
     "test:cupo": "tsx lib/quota.test.ts",
     "test:reabastecer": "tsx lib/replenish.test.ts",
-    "test:n8n": "tsx n8n/workflows.test.mts"
+    "test:n8n": "tsx n8n/workflows.test.mts",
+    "test:imanes": "tsx lib/magnets.test.mts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

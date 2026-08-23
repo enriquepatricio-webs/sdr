@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { campaigns, leadStatusEnum, leads } from '@/lib/db/schema'
 import { Importador } from './importador'
 import { Filtros } from './filtros'
+import { workspaceActivo } from '@/lib/workspace'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,7 +18,13 @@ export default async function PaginaLeads({
   const sp = await searchParams
   const pagina = Math.max(1, Number(sp.p) || 1)
 
+  // Los leads son de una empresa. Sin este filtro, con dos clientes conectados
+  // la lista los mezcla y acabas escribiéndole al prospecto de uno desde la
+  // cuenta del otro.
+  const empresa = await workspaceActivo()
+
   const condiciones: SQL[] = []
+  if (empresa) condiciones.push(eq(campaigns.workspaceId, empresa.id))
   if (sp.estado && leadStatusEnum.enumValues.includes(sp.estado as never)) {
     condiciones.push(eq(leads.status, sp.estado as (typeof leadStatusEnum.enumValues)[number]))
   }
@@ -40,10 +47,15 @@ export default async function PaginaLeads({
       .orderBy(desc(leads.updatedAt))
       .limit(POR_PAGINA)
       .offset((pagina - 1) * POR_PAGINA),
-    db.select({ n: count() }).from(leads).where(filtro),
+    db
+      .select({ n: count() })
+      .from(leads)
+      .innerJoin(campaigns, eq(leads.campaignId, campaigns.id))
+      .where(filtro),
     db
       .select({ id: campaigns.id, name: campaigns.name, channel: campaigns.channel })
       .from(campaigns)
+      .where(empresa ? eq(campaigns.workspaceId, empresa.id) : undefined)
       .orderBy(asc(campaigns.createdAt)),
   ])
 

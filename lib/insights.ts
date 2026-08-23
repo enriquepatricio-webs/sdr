@@ -13,7 +13,7 @@
  */
 import { and, desc, eq, gte, sql } from 'drizzle-orm'
 import { db } from './db'
-import { type Lecciones, leads, meetings, touches } from './db/schema'
+import { type Lecciones, campaigns, leads, meetings, touches } from './db/schema'
 import { chatJson } from './openrouter'
 
 /** Por debajo de esto no se destila nada. */
@@ -61,8 +61,12 @@ export type Muestra = { texto: string; resultado: 'respondio' | 'silencio'; acab
  *
  * Solo el primer toque: es el único momento comparable entre leads. Comparar un
  * cuarto seguimiento con una apertura no dice nada sobre la apertura.
+ *
+ * Con `workspaceId` se mira solo lo de esa empresa. Mezclarlas daría lecciones
+ * inservibles: lo que abre una conversación vendiendo software industrial no
+ * tiene nada que ver con lo que la abre vendiendo formación.
  */
-export async function obtenerMuestras(limite = 200): Promise<Muestra[]> {
+export async function obtenerMuestras(limite = 200, workspaceId?: string | null): Promise<Muestra[]> {
   const filas = await db
     .select({
       texto: touches.body,
@@ -78,8 +82,14 @@ export async function obtenerMuestras(limite = 200): Promise<Muestra[]> {
     })
     .from(touches)
     .innerJoin(leads, eq(touches.leadId, leads.id))
+    .innerJoin(campaigns, eq(leads.campaignId, campaigns.id))
     .where(
-      and(eq(touches.direction, 'out'), eq(touches.status, 'enviado'), eq(touches.step, 1)),
+      and(
+        eq(touches.direction, 'out'),
+        eq(touches.status, 'enviado'),
+        eq(touches.step, 1),
+        ...(workspaceId ? [eq(campaigns.workspaceId, workspaceId)] : []),
+      ),
     )
     .orderBy(desc(touches.sentAt))
     .limit(limite)
@@ -122,8 +132,11 @@ export type ResultadoAprendizaje =
  * "consejos de ventas" a secas devolvería lo que ya sabe de su entrenamiento,
  * no lo que funciona con estos prospectos concretos.
  */
-export async function destilarLecciones(modelo: string): Promise<ResultadoAprendizaje> {
-  const muestras = await obtenerMuestras()
+export async function destilarLecciones(
+  modelo: string,
+  workspaceId?: string | null,
+): Promise<ResultadoAprendizaje> {
+  const muestras = await obtenerMuestras(200, workspaceId)
 
   if (muestras.length < MINIMO_PARA_APRENDER) {
     return {

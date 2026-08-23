@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm'
 import {
   boolean,
   check,
+  primaryKey,
   foreignKey,
   index,
   integer,
@@ -223,6 +224,8 @@ export const accounts = pgTable(
   'accounts',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    /** A qué cliente pertenece. Una cuenta no puede servir a dos empresas. */
+    workspaceId: uuid('workspace_id').references(() => workspaces.id, { onDelete: 'restrict' }),
     unipileAccountId: text('unipile_account_id').notNull(),
     provider: channelEnum('provider').notNull(),
     displayName: text('display_name').notNull(),
@@ -236,6 +239,11 @@ export const accounts = pgTable(
     uniqueIndex('accounts_unipile_account_id_key').on(t.unipileAccountId),
     // Destino de la clave ajena compuesta de campaigns: ata canal con proveedor.
     unique('accounts_id_provider_key').on(t.id, t.provider),
+    // Y esta ata la cuenta con su workspace, para que una campaña no pueda
+    // enviar por la cuenta de otro cliente. Es un error de base de datos, no
+    // un descuido que se descubre cuando el prospecto ya recibió el mensaje.
+    unique('accounts_id_workspace_key').on(t.id, t.workspaceId),
+    index('accounts_workspace_idx').on(t.workspaceId),
     check(
       'accounts_daily_limit_range',
       sql`${t.dailyLimit} > 0 AND ${t.dailyLimit} <= ${sql.raw(String(MAX_DAILY_LIMIT))}`,
@@ -254,6 +262,7 @@ export const accounts = pgTable(
 
 export const icps = pgTable('icps', {
   id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id').references(() => workspaces.id, { onDelete: 'restrict' }),
   name: text('name').notNull(),
   description: text('description'),
   /** Señales que SÍ cualifican. */
@@ -275,6 +284,12 @@ export const playbooks = pgTable(
   'playbooks',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    /**
+     * NULL = playbook por defecto, el que usan todos los workspaces que no
+     * tengan uno propio. Es lo que hace que el método de venta venga puesto de
+     * fábrica y nadie tenga que escribirlo para empezar.
+     */
+    workspaceId: uuid('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     version: integer('version').notNull().default(1),
     systemPrompt: text('system_prompt').notNull(),
@@ -290,21 +305,39 @@ export const playbooks = pgTable(
   },
   (t) => [
     uniqueIndex('playbooks_name_version_key').on(t.name, t.version),
-    // Como mucho un playbook activo en todo el sistema: el agente carga uno y solo uno.
-    uniqueIndex('playbooks_single_active_key')
+    /**
+     * Un activo por ámbito, no uno en todo el sistema. El índice antiguo
+     * reventaba en cuanto un segundo cliente quisiera su propio playbook.
+     */
+    uniqueIndex('playbooks_activo_global')
       .on(t.isActive)
-      .where(sql`${t.isActive}`),
+      .where(sql`${t.isActive} AND ${t.workspaceId} IS NULL`),
+    uniqueIndex('playbooks_activo_por_workspace')
+      .on(t.workspaceId)
+      .where(sql`${t.isActive} AND ${t.workspaceId} IS NOT NULL`),
+    index('playbooks_workspace_idx').on(t.workspaceId),
   ],
 )
 
 /**
- * La empresa para la que se vende.
+ * Un workspace: la empresa para la que se vende.
  *
- * Existe aparte del playbook porque el playbook es el MÉTODO de venta y la
- * empresa es el CONTEXTO. El mismo método sirve para varios clientes; lo que
- * cambia es qué vende cada uno y qué se puede decir de él.
+ * Existe aparte del playbook porque el playbook es el MÉTODO de venta y esto es
+ * el CONTEXTO. El mismo método sirve para varios clientes; lo que cambia es qué
+ * vende cada uno.
+ *
+ * La tabla se sigue llamando `workspaces` en la base de datos a propósito: ya tiene
+ * datos y renombrarla obligaría a una migración destructiva por un nombre. En el
+ * código se llama `workspaces`, que es lo que significa.
+ *
+ * Los ajustes que dependen del cliente viven aquí como columnas, no en la tabla
+ * `settings`. Un `telegram_chat_id` global manda los avisos del cliente A al
+ * chat del B, y un `autopilot` global enciende el envío de todos a la vez.
  */
-export const sellers = pgTable(
+export const workspaces = pgTable(
+  // El nombre de la tabla NO cambia: ya tiene datos y renombrarla obligaría a
+  // una migración destructiva por un nombre. En el código se llama `workspaces`,
+  // que es lo que significa.
   'sellers',
   {
     id: uuid('id').primaryKey().defaultRandom(),
@@ -315,16 +348,38 @@ export const sellers = pgTable(
     /** Lo que se sacó de su web. Se regenera al pulsar "Leer mi web". */
     scrapedContext: text('scraped_context'),
     scrapedAt: timestamp('scraped_at', { withTimezone: true }),
-    /** Si se rellena, sustituye a la oferta del playbook para esta empresa. */
+    /** Oferta, garantía y condiciones. Sin cifras: no salen por mensaje. */
     offer: text('offer'),
+
+    /* --- Ajustes por cliente ------------------------------------------- */
+    /** Si el agente envía solo. Por workspace: encenderlo en uno no enciende los demás. */
+    autopilot: boolean('autopilot').notNull().default(false),
+    /** Cada cliente quiere sus avisos en su chat. */
+    telegramChatId: text('telegram_chat_id'),
+    /**
+     * Lo aprendido de los resultados DE ESTE cliente. Compartirlo entre
+     * empresas no es contexto: es ruido con aspecto de dato, y en el prompt
+     * va con la coletilla de que pesa más que cualquier corazonada.
+     */
+    lessons: jsonb('lessons').$type<Lecciones>(),
+    autoProspect: boolean('auto_prospect').notNull().default(false),
+    autoProspectMinLeads: integer('auto_prospect_min_leads').notNull().default(20),
+    autoProspectMaxItems: integer('auto_prospect_max_items').notNull().default(50),
+    autoProspectMinScore: integer('auto_prospect_min_score').notNull().default(70),
+
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
       .defaultNow()
       .$onUpdate(() => new Date()),
   },
-  (t) => [uniqueIndex('sellers_name_key').on(t.name)],
+  (t) => [
+    uniqueIndex('sellers_name_key').on(t.name),
+    // Destino de la clave ajena compuesta de accounts.
+    unique('workspaces_id_key').on(t.id),
+  ],
 )
+
 
 export const campaigns = pgTable(
   'campaigns',
@@ -335,7 +390,7 @@ export const campaigns = pgTable(
     icpId: uuid('icp_id').references(() => icps.id, { onDelete: 'restrict' }),
     playbookId: uuid('playbook_id').references(() => playbooks.id, { onDelete: 'restrict' }),
     /** Para quién se vende en esta campaña. */
-    sellerId: uuid('seller_id').references(() => sellers.id, { onDelete: 'restrict' }),
+    workspaceId: uuid('seller_id').references(() => workspaces.id, { onDelete: 'restrict' }),
     accountId: uuid('account_id').references(() => accounts.id, { onDelete: 'restrict' }),
     channel: channelEnum('channel').notNull(),
     dailyCap: integer('daily_cap').notNull().default(DEFAULT_DAILY_LIMIT),
@@ -357,6 +412,17 @@ export const campaigns = pgTable(
       foreignColumns: [accounts.id, accounts.provider],
       name: 'campaigns_account_channel_fk',
     }).onDelete('restrict'),
+    /**
+     * La cuenta tiene que ser del MISMO workspace que la campaña. Sin esto,
+     * un descuido en un formulario manda mensajes de un cliente por la cuenta
+     * de otro, y eso no se arregla pidiendo perdón.
+     */
+    foreignKey({
+      columns: [t.accountId, t.workspaceId],
+      foreignColumns: [accounts.id, accounts.workspaceId],
+      name: 'campaigns_account_workspace_fk',
+    }).onDelete('restrict'),
+    index('campaigns_workspace_idx').on(t.workspaceId),
     // Una campaña 'running' sin cuenta o sin playbook es inejecutable: que no
     // llegue a ese estado en vez de fallar a mitad de la ejecución del agente.
     check(
@@ -606,6 +672,7 @@ export const prospectSearches = pgTable(
   'prospect_searches',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id').references(() => workspaces.id, { onDelete: 'restrict' }),
     icpId: uuid('icp_id')
       .notNull()
       .references(() => icps.id, { onDelete: 'restrict' }),
@@ -710,6 +777,130 @@ export const prospects = pgTable(
       'prospects_imported_has_lead',
       sql`${t.decision} <> 'importado' OR ${t.leadId} IS NOT NULL`,
     ),
+  ],
+)
+
+/* -------------------------------------------------------------------------- */
+/* Lead magnets de Instagram                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Estado de una persona que ha comentado la palabra clave.
+ *
+ * El orden es el del embudo y no se salta pasos: no se entrega el recurso a
+ * quien no se ha verificado, y no se verifica a quien no ha comentado.
+ */
+export const magnetStateEnum = pgEnum('magnet_state', [
+  'detectado',
+  'pidiendo_follow',
+  'verificado',
+  'entregado',
+  'en_conversacion',
+  'descartado',
+])
+
+export const leadMagnets = pgTable(
+  'lead_magnets',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    /** Cuenta de Instagram por la que se responde. */
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'restrict' }),
+    name: text('name').notNull(),
+    /** Publicación cuyos comentarios se vigilan. */
+    postUrl: text('post_url').notNull(),
+    /** La palabra que tienen que comentar. Se compara sin acentos ni mayúsculas. */
+    keyword: text('keyword').notNull(),
+    /** Lo que se les manda cuando se confirma que siguen la cuenta. */
+    resource: text('resource').notNull(),
+    /** Lo que se les dice mientras todavía no siguen. */
+    followMessage: text('follow_message').notNull(),
+    /** Si al entregar el recurso se intenta además llevarlos a una reunión. */
+    pitchMeeting: boolean('pitch_meeting').notNull().default(true),
+    active: boolean('active').notNull().default(false),
+    /** Cuántas veces se ha mirado la publicación y cuándo fue la última. */
+    lastCheckedAt: timestamp('last_checked_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    index('lead_magnets_activos_idx').on(t.active, t.lastCheckedAt).where(sql`${t.active}`),
+    index('lead_magnets_workspace_idx').on(t.workspaceId),
+    // La cuenta tiene que ser del mismo workspace que el imán.
+    foreignKey({
+      columns: [t.accountId, t.workspaceId],
+      foreignColumns: [accounts.id, accounts.workspaceId],
+      name: 'lead_magnets_account_workspace_fk',
+    }).onDelete('restrict'),
+  ],
+)
+
+export const magnetContacts = pgTable(
+  'magnet_contacts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    magnetId: uuid('magnet_id')
+      .notNull()
+      .references(() => leadMagnets.id, { onDelete: 'cascade' }),
+    /** Sin arroba, en minúsculas. */
+    username: text('username').notNull(),
+    fullName: text('full_name'),
+    /** Id del comentario, para no procesar dos veces el mismo. */
+    commentId: text('comment_id'),
+    providerId: text('provider_id'),
+    unipileChatId: text('unipile_chat_id'),
+    state: magnetStateEnum('state').notNull().default('detectado'),
+    /** Cuántas veces se le ha pedido que siga. Hay un tope. */
+    followAsks: integer('follow_asks').notNull().default(0),
+    verifiedAt: timestamp('verified_at', { withTimezone: true }),
+    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+    /** Si acabó convertido en lead del embudo normal. */
+    leadId: uuid('lead_id').references(() => leads.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    /**
+     * Una persona, una vez por imán. Es lo que impide mandarle el recurso dos
+     * veces a quien comenta la palabra tres veces, que en Instagram pasa mucho.
+     */
+    uniqueIndex('magnet_contacts_magnet_username_key').on(t.magnetId, t.username),
+    index('magnet_contacts_cola_idx').on(t.state, t.createdAt),
+    uniqueIndex('magnet_contacts_comment_key')
+      .on(t.commentId)
+      .where(sql`${t.commentId} IS NOT NULL`),
+  ],
+)
+
+/**
+ * Quién sigue a cada cuenta. Se refresca por lotes.
+ *
+ * Se guarda la lista entera y se consulta por índice, en vez de mirar a quién
+ * sigue cada persona una por una: la comprobación individual cuesta una
+ * ejecución de scraping por contacto y sale carísima en cuanto el imán funciona.
+ */
+export const followers = pgTable(
+  'followers',
+  {
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    username: text('username').notNull(),
+    seenAt: timestamp('seen_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.accountId, t.username] }),
+    index('followers_seen_idx').on(t.accountId, t.seenAt),
   ],
 )
 

@@ -1,6 +1,12 @@
 import Link from 'next/link'
-import { getSettings } from '@/lib/settings'
+import { cookies } from 'next/headers'
+import { and, eq, ne } from 'drizzle-orm'
+import { db } from '@/lib/db'
+import { accounts } from '@/lib/db/schema'
+import { COOKIE_EMPRESA } from '@/lib/empresa'
+import { listarWorkspaces } from '@/lib/workspace'
 import { Navegacion } from './navegacion'
+import { SelectorEmpresa } from './selector-empresa'
 import { CerrarSesion } from './cerrar-sesion'
 
 /**
@@ -8,17 +14,32 @@ import { CerrarSesion } from './cerrar-sesion'
  *
  * Si la base de datos no responde todavía, se asume autopiloto APAGADO. Fallar
  * hacia el lado que no envía mensajes es la única opción defendible.
+ *
+ * El autopiloto que se pinta aquí es el de la empresa con la que se está
+ * trabajando, no un global: encenderlo en una no lo enciende en las demás y la
+ * franja roja tiene que decir la verdad de lo que hay delante.
  */
-async function leerAutopiloto(): Promise<boolean> {
+async function leerMarco() {
   try {
-    return (await getSettings()).autopilot
+    const [empresas, galleta, instagram] = await Promise.all([
+      listarWorkspaces(),
+      cookies(),
+      db
+        .select({ id: accounts.id })
+        .from(accounts)
+        .where(and(eq(accounts.provider, 'instagram'), ne(accounts.status, 'disconnected')))
+        .limit(1),
+    ])
+    const elegida = galleta.get(COOKIE_EMPRESA)?.value
+    const actual = empresas.find((e) => e.id === elegida) ?? empresas[0] ?? null
+    return { empresas, actual, autopiloto: actual?.autopilot ?? false, hayInstagram: instagram.length > 0 }
   } catch {
-    return false
+    return { empresas: [], actual: null, autopiloto: false, hayInstagram: false }
   }
 }
 
 export default async function PanelLayout({ children }: { children: React.ReactNode }) {
-  const autopiloto = await leerAutopiloto()
+  const { empresas, actual, autopiloto, hayInstagram } = await leerMarco()
 
   return (
     <div className="min-h-screen">
@@ -33,9 +54,13 @@ export default async function PanelLayout({ children }: { children: React.ReactN
             SDR
           </Link>
 
-          <Navegacion />
+          <Navegacion hayInstagram={hayInstagram} />
 
           <div className="ml-auto flex items-center gap-4">
+            {empresas.length > 1 && actual && (
+              <SelectorEmpresa empresas={empresas} actual={actual.id} />
+            )}
+
             <Link
               href="/settings"
               className="flex items-center gap-2"

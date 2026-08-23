@@ -1,15 +1,19 @@
 import { NextResponse } from 'next/server'
+import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '@/lib/db'
-import { runLogs } from '@/lib/db/schema'
+import { runLogs, workspaces } from '@/lib/db/schema'
 import { parseBody, serverError } from '@/lib/api'
-import { getSettings, setSetting } from '@/lib/settings'
+import { setSetting } from '@/lib/settings'
+import { ajustesEfectivos, obtenerWorkspace } from '@/lib/workspace'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET() {
+export async function GET(request: Request) {
+  const workspaceId = new URL(request.url).searchParams.get('workspaceId')
+
   try {
-    return NextResponse.json(await getSettings())
+    return NextResponse.json(await ajustesEfectivos(workspaceId))
   } catch (err) {
     return serverError(err, 'No se pudieron leer los ajustes')
   }
@@ -27,6 +31,7 @@ export async function GET() {
  */
 const cuerpo = z
   .object({
+    workspaceId: z.string().uuid().optional(),
     autopilot: z.boolean().optional(),
     openrouterModel: z.string().min(1).optional(),
     telegramChatId: z.string().optional(),
@@ -40,27 +45,70 @@ const cuerpo = z
   })
   .strict()
 
+/**
+ * Qué campo vive en la fila de la empresa y con qué nombre de columna.
+ *
+ * Lo que no esté aquí va a la tabla `settings`, que es global. La lista es
+ * explícita a propósito: si alguien añade un ajuste nuevo tiene que decidir de
+ * forma consciente si es de una empresa o de todo el sistema.
+ */
+const COLUMNA_DE_WORKSPACE = {
+  autopilot: 'autopilot',
+  telegramChatId: 'telegramChatId',
+  companyName: 'name',
+  autoProspect: 'autoProspect',
+  autoProspectMinLeads: 'autoProspectMinLeads',
+  autoProspectMaxItems: 'autoProspectMaxItems',
+  autoProspectMinScore: 'autoProspectMinScore',
+} as const
+
+type CampoDeWorkspace = keyof typeof COLUMNA_DE_WORKSPACE
+
 export async function PATCH(request: Request) {
   const body = await parseBody(request, cuerpo)
   if (!body.ok) return body.response
 
+  const { workspaceId, ...campos } = body.data
+
   try {
-    for (const [clave, valor] of Object.entries(body.data)) {
+    const ws = await obtenerWorkspace(workspaceId)
+
+    const deLaEmpresa: Record<string, unknown> = {}
+    for (const [clave, valor] of Object.entries(campos)) {
       if (valor === undefined) continue
-      await setSetting(clave as keyof typeof body.data, valor as never)
+      if (clave in COLUMNA_DE_WORKSPACE) {
+        deLaEmpresa[COLUMNA_DE_WORKSPACE[clave as CampoDeWorkspace]] = valor
+      } else {
+        await setSetting(clave as 'openrouterModel', valor as never)
+      }
+    }
+
+    if (Object.keys(deLaEmpresa).length) {
+      // Sin empresa dada de alta no hay dónde guardar esto. Antes caía en la
+      // tabla global y parecía guardado; ahora se dice.
+      if (!ws) {
+        return NextResponse.json(
+          { error: 'Todavía no hay ninguna empresa. Créala en /empresa antes de ajustar esto.' },
+          { status: 409 },
+        )
+      }
+      await db
+        .update(workspaces)
+        .set({ ...deLaEmpresa, updatedAt: new Date() })
+        .where(eq(workspaces.id, ws.id))
     }
 
     // Encender el autopiloto es el cambio con consecuencias del sistema: a
     // partir de ahí los mensajes salen solos. Queda registrado siempre.
-    if (body.data.autopilot !== undefined) {
+    if (campos.autopilot !== undefined) {
       await db.insert(runLogs).values({
         workflow: 'dashboard',
-        level: body.data.autopilot ? 'warn' : 'info',
-        message: `Autopiloto ${body.data.autopilot ? 'ENCENDIDO: los mensajes salen solos' : 'apagado'}`,
+        level: campos.autopilot ? 'warn' : 'info',
+        message: `Autopiloto ${campos.autopilot ? 'ENCENDIDO: los mensajes salen solos' : 'apagado'}${ws ? ` en ${ws.name}` : ''}`,
       })
     }
 
-    return NextResponse.json(await getSettings())
+    return NextResponse.json(await ajustesEfectivos(ws?.id))
   } catch (err) {
     return serverError(err, 'No se pudieron guardar los ajustes')
   }

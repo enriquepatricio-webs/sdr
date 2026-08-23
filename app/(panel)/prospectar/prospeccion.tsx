@@ -78,16 +78,27 @@ export function Prospeccion({
 
   const sondeo = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  /**
+   * Sondea cada 5 s mientras Apify siga trabajando. Un run tarda minutos:
+   * sondear más rápido no lo acelera y gasta invocaciones.
+   *
+   * Es un bucle y no una llamada que se rellama a sí misma con `setTimeout`
+   * porque aquella se referenciaba antes de estar declarada. Al desmontar, el
+   * `clearTimeout` deja la promesa sin resolver y el bucle sencillamente no
+   * continúa: no queda ningún `setDetalle` sobre un componente que ya no existe.
+   */
   const consultar = useCallback(async (id: string) => {
-    const res = await fetch(`/api/prospect/search/${id}`)
-    const json: EstadoBusqueda = await res.json()
-    setDetalle(json)
-    // Se sondea cada 5 s mientras Apify siga trabajando. Un run tarda minutos:
-    // sondear más rápido no lo acelera y gasta invocaciones.
-    if (json.estado === 'ejecutando' || json.estado === 'puntuando') {
-      sondeo.current = setTimeout(() => consultar(id), 5000)
-    } else {
-      router.refresh()
+    for (;;) {
+      const res = await fetch(`/api/prospect/search/${id}`)
+      const json: EstadoBusqueda = await res.json()
+      setDetalle(json)
+      if (json.estado !== 'ejecutando' && json.estado !== 'puntuando') {
+        router.refresh()
+        return
+      }
+      await new Promise((sigue) => {
+        sondeo.current = setTimeout(sigue, 5000)
+      })
     }
   }, [router])
 

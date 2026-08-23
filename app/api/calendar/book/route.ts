@@ -39,7 +39,7 @@ export async function POST(request: Request) {
       .innerJoin(campaigns, eq(leads.campaignId, campaigns.id))
       .where(eq(leads.id, d.leadId))
     if (!fila) return jsonError('Ese lead no existe.', 404)
-    const { lead } = fila
+    const { lead, campana } = fila
 
     const umbral = playbook.bookingRules.min_score_to_book
     if (lead.score === null) {
@@ -109,6 +109,7 @@ export async function POST(request: Request) {
         porQue: lead.qualification?.summary ?? lead.qualification?.reasoning ?? '',
         leadId: lead.id,
       }),
+      campana.workspaceId,
     ).catch(() => ({ ok: false as const, error: 'Telegram falló' }))
 
     return NextResponse.json({

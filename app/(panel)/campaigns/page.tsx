@@ -1,8 +1,10 @@
 import Link from 'next/link'
-import { asc, count, eq } from 'drizzle-orm'
+import { and, asc, count, eq, ne } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { accounts, campaigns, leads } from '@/lib/db/schema'
 import { dentroDeVentana } from '@/lib/sending-window'
+import { workspaceActivo } from '@/lib/workspace'
+import { NuevaCampana } from './nueva'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,21 +16,42 @@ const COLOR: Record<string, string> = {
 }
 
 export default async function PaginaCampanas() {
-  const filas = await db
-    .select({ campana: campaigns, cuenta: accounts, leads: count(leads.id) })
-    .from(campaigns)
-    .leftJoin(accounts, eq(campaigns.accountId, accounts.id))
-    .leftJoin(leads, eq(leads.campaignId, campaigns.id))
-    .groupBy(campaigns.id, accounts.id)
-    .orderBy(asc(campaigns.createdAt))
+  // Cada campaña vive dentro de una empresa, y una cuenta solo puede usarse en
+  // campañas de la suya: la clave ajena compuesta lo impide en la base de datos.
+  const empresa = await workspaceActivo()
+
+  const [filas, cuentas] = await Promise.all([
+    db
+      .select({ campana: campaigns, cuenta: accounts, leads: count(leads.id) })
+      .from(campaigns)
+      .leftJoin(accounts, eq(campaigns.accountId, accounts.id))
+      .leftJoin(leads, eq(leads.campaignId, campaigns.id))
+      .where(empresa ? eq(campaigns.workspaceId, empresa.id) : undefined)
+      .groupBy(campaigns.id, accounts.id)
+      .orderBy(asc(campaigns.createdAt)),
+    empresa
+      ? db
+          .select({
+            id: accounts.id,
+            displayName: accounts.displayName,
+            provider: accounts.provider,
+          })
+          .from(accounts)
+          .where(and(eq(accounts.workspaceId, empresa.id), ne(accounts.status, 'disconnected')))
+          .orderBy(asc(accounts.createdAt))
+      : Promise.resolve([]),
+  ])
 
   const ahora = new Date()
 
   return (
     <div className="space-y-6">
-      <header>
-        <p className="etiqueta">Campañas</p>
-        <h1 className="mt-1 text-3xl font-semibold tracking-tight">{filas.length} campañas</h1>
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="etiqueta">Campañas</p>
+          <h1 className="mt-1 text-3xl font-semibold tracking-tight">{filas.length} campañas</h1>
+        </div>
+        <NuevaCampana cuentas={cuentas} />
       </header>
 
       {filas.length === 0 ? (

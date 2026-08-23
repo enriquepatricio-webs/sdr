@@ -1,18 +1,35 @@
-import { NextResponse } from 'next/server'
-import { and, asc, count, eq, gte, inArray, isNull, lte, or, sql } from 'drizzle-orm'
-import { db } from '@/lib/db'
-import { accounts, campaigns, leads, touches } from '@/lib/db/schema'
-import { serverError } from '@/lib/api'
+import { NextResponse } from "next/server";
+import {
+  and,
+  asc,
+  count,
+  eq,
+  gte,
+  inArray,
+  isNull,
+  lte,
+  or,
+  sql,
+} from "drizzle-orm";
+import { db } from "@/lib/db";
+import {
+  accounts,
+  campaigns,
+  leads,
+  touches,
+  workspaces,
+} from "@/lib/db/schema";
+import { serverError } from "@/lib/api";
 import {
   fueraDeVentana,
   inicioDeLaHoraLocal,
   inicioDelDiaLocal,
   proximaApertura,
-} from '@/lib/sending-window'
-import { calcularCupo } from '@/lib/quota'
-import { getSettings } from '@/lib/settings'
+} from "@/lib/sending-window";
+import { calcularCupo } from "@/lib/quota";
+import { getSettings } from "@/lib/settings";
 
-export const dynamic = 'force-dynamic'
+export const dynamic = "force-dynamic";
 
 /**
  * La cola de trabajo del agente. Es el punto donde vive el control de riesgo.
@@ -28,66 +45,96 @@ export const dynamic = 'force-dynamic'
  */
 
 type Motivo =
-  | 'campana_pausada'
-  | 'sin_cuenta'
-  | 'cuenta_inactiva'
-  | 'fuera_de_ventana'
-  | 'tope_diario_cuenta'
-  | 'tope_diario_campana'
-  | 'tope_horario'
-  | 'sin_leads_pendientes'
+  | "campana_pausada"
+  | "sin_cuenta"
+  | "cuenta_inactiva"
+  | "fuera_de_ventana"
+  | "tope_diario_cuenta"
+  | "tope_diario_campana"
+  | "tope_horario"
+  | "sin_leads_pendientes";
 
 export async function GET(request: Request) {
-  const url = new URL(request.url)
-  const campaignId = url.searchParams.get('campaign_id')
-  const modo = url.searchParams.get('mode') === 'seguimiento' ? 'seguimiento' : 'primer_toque'
-  const limite = Math.min(Number(url.searchParams.get('limit')) || 25, 100)
-  const ahora = new Date()
+  const url = new URL(request.url);
+  const campaignId = url.searchParams.get("campaign_id");
+  const modo =
+    url.searchParams.get("mode") === "seguimiento"
+      ? "seguimiento"
+      : "primer_toque";
+  const limite = Math.min(Number(url.searchParams.get("limit")) || 25, 100);
+  const ahora = new Date();
 
   try {
-    const ajustes = await getSettings()
+    const ajustes = await getSettings();
 
     const filas = await db
-      .select({ campana: campaigns, cuenta: accounts })
+      .select({ campana: campaigns, cuenta: accounts, empresa: workspaces })
       .from(campaigns)
       .leftJoin(accounts, eq(campaigns.accountId, accounts.id))
-      .where(campaignId ? eq(campaigns.id, campaignId) : eq(campaigns.status, 'running'))
+      .leftJoin(workspaces, eq(campaigns.workspaceId, workspaces.id))
+      .where(
+        campaignId
+          ? eq(campaigns.id, campaignId)
+          : eq(campaigns.status, "running"),
+      );
 
-    const seleccionados: (typeof leads.$inferSelect)[] = []
-    const descartadas: { campana: string; nombre: string; motivo: Motivo; detalle?: string }[] = []
-    const reintentos: Date[] = []
+    /**
+     * Cada lead viaja con su empresa. n8n la necesita para pedir el playbook
+     * correcto y para decir de parte de quién escribe; el autopiloto en cambio
+     * no se decide aquí, sino en /api/messages/send, que es la única puerta de
+     * salida y la aplica leyendo la empresa de la campaña.
+     */
+    const seleccionados: (typeof leads.$inferSelect & {
+      workspaceId: string | null;
+      empresa: string | null;
+    })[] = [];
+    const descartadas: {
+      campana: string;
+      nombre: string;
+      motivo: Motivo;
+      detalle?: string;
+    }[] = [];
+    const reintentos: Date[] = [];
 
-    for (const { campana, cuenta } of filas) {
+    for (const { campana, cuenta, empresa } of filas) {
       const descartar = (motivo: Motivo, detalle?: string) =>
-        descartadas.push({ campana: campana.id, nombre: campana.name, motivo, detalle })
+        descartadas.push({
+          campana: campana.id,
+          nombre: campana.name,
+          motivo,
+          detalle,
+        });
 
       // 1. El interruptor de parada actúa aquí: pausar la campaña vacía la cola.
-      if (campana.status !== 'running') {
-        descartar('campana_pausada')
-        continue
+      if (campana.status !== "running") {
+        descartar("campana_pausada");
+        continue;
       }
       if (!cuenta) {
-        descartar('sin_cuenta')
-        continue
+        descartar("sin_cuenta");
+        continue;
       }
-      if (cuenta.status !== 'active') {
-        descartar('cuenta_inactiva', `la cuenta está en "${cuenta.status}"`)
-        continue
+      if (cuenta.status !== "active") {
+        descartar("cuenta_inactiva", `la cuenta está en "${cuenta.status}"`);
+        continue;
       }
 
       // 2. Ventana de envío, en la zona horaria del prospecto.
-      const fuera = fueraDeVentana(campana.sendingWindow, ahora)
+      const fuera = fueraDeVentana(campana.sendingWindow, ahora);
       if (fuera) {
-        const apertura = proximaApertura(campana.sendingWindow, ahora)
-        reintentos.push(apertura)
-        descartar('fuera_de_ventana', `${fuera}; abre el ${apertura.toISOString()}`)
-        continue
+        const apertura = proximaApertura(campana.sendingWindow, ahora);
+        reintentos.push(apertura);
+        descartar(
+          "fuera_de_ventana",
+          `${fuera}; abre el ${apertura.toISOString()}`,
+        );
+        continue;
       }
 
       // 3. Cuota. Se cuenta sobre `sent_at`, no sobre `created_at`: un borrador
       //    redactado el lunes y aprobado el jueves consume la cuota del jueves.
-      const inicioDia = inicioDelDiaLocal(campana.sendingWindow.tz, ahora)
-      const inicioHora = inicioDeLaHoraLocal(campana.sendingWindow.tz, ahora)
+      const inicioDia = inicioDelDiaLocal(campana.sendingWindow.tz, ahora);
+      const inicioHora = inicioDeLaHoraLocal(campana.sendingWindow.tz, ahora);
 
       const [conteo] = await db
         .select({
@@ -100,11 +147,11 @@ export async function GET(request: Request) {
         .where(
           and(
             eq(touches.accountId, cuenta.id),
-            eq(touches.direction, 'out'),
-            eq(touches.status, 'enviado'),
+            eq(touches.direction, "out"),
+            eq(touches.status, "enviado"),
             gte(touches.sentAt, inicioDia),
           ),
-        )
+        );
 
       // El cálculo vive en lib/quota.ts, aparte y con sus propias pruebas: es la
       // regla que impide que bloqueen la cuenta, y no puede depender de cuántos
@@ -118,60 +165,76 @@ export async function GET(request: Request) {
         enviadosHoyCampana: Number(conteo?.diaCampana ?? 0),
         enviadosEstaHoraCuenta: Number(conteo?.hora ?? 0),
         lote: limite - seleccionados.length,
-      })
+      });
 
       if (!cupo.hay) {
         reintentos.push(
-          cupo.motivo === 'tope_horario'
+          cupo.motivo === "tope_horario"
             ? new Date(inicioHora.getTime() + 3600_000)
             : proximaApertura(campana.sendingWindow, ahora),
-        )
-        descartar(cupo.motivo, cupo.detalle)
-        continue
+        );
+        descartar(cupo.motivo, cupo.detalle);
+        continue;
       }
 
-      const disponibles = cupo.cuantos
+      const disponibles = cupo.cuantos;
 
       // 4. Leads que tocan según el modo.
       const condiciones =
-        modo === 'primer_toque'
+        modo === "primer_toque"
           ? and(
               eq(leads.campaignId, campana.id),
-              eq(leads.status, 'nuevo'),
+              eq(leads.status, "nuevo"),
               or(isNull(leads.nextActionAt), lte(leads.nextActionAt, ahora)),
             )
           : and(
               eq(leads.campaignId, campana.id),
-              inArray(leads.status, ['contactado', 'en_seguimiento']),
+              inArray(leads.status, ["contactado", "en_seguimiento"]),
               lte(leads.nextActionAt, ahora),
               sql`${leads.touchCount} < ${campana.maxTouches}`,
-            )
+            );
 
       const lote = await db
         .select()
         .from(leads)
         .where(condiciones)
         .orderBy(asc(leads.nextActionAt), asc(leads.createdAt))
-        .limit(disponibles)
+        .limit(disponibles);
 
-      if (!lote.length) descartar('sin_leads_pendientes')
-      seleccionados.push(...lote)
+      if (!lote.length) descartar("sin_leads_pendientes");
+      seleccionados.push(
+        ...lote.map((l) => ({
+          ...l,
+          workspaceId: campana.workspaceId,
+          empresa: empresa?.name ?? null,
+        })),
+      );
 
-      if (seleccionados.length >= limite) break
+      if (seleccionados.length >= limite) break;
     }
 
     return NextResponse.json({
       modo,
-      autopilot: ajustes.autopilot,
       modelo: ajustes.openrouterModel,
+      // El autopiloto es de cada empresa. Se informa de cuál está encendida para
+      // poder mirarlo de un vistazo, pero quien lo aplica es /api/messages/send.
+      empresas: [
+        ...new Map(
+          filas
+            .filter((f) => f.empresa)
+            .map((f) => [f.empresa!.id, f.empresa!]),
+        ).values(),
+      ].map((e) => ({ id: e.id, nombre: e.name, autopilot: e.autopilot })),
       leads: seleccionados.slice(0, limite),
       // Sin esto, "no ha salido nada" es indistinguible de "está roto".
       descartadas,
       proximaRevision: reintentos.length
-        ? new Date(Math.min(...reintentos.map((d) => d.getTime()))).toISOString()
+        ? new Date(
+            Math.min(...reintentos.map((d) => d.getTime())),
+          ).toISOString()
         : null,
-    })
+    });
   } catch (err) {
-    return serverError(err, 'No se pudo calcular la cola de envío')
+    return serverError(err, "No se pudo calcular la cola de envío");
   }
 }

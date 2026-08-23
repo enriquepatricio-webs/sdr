@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { and, count, eq, gte, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { campaigns, leads, meetings, runLogs, touches } from '@/lib/db/schema'
-import { getSettings } from '@/lib/settings'
+import { ajustesEfectivos, workspaceActivo } from '@/lib/workspace'
 import { MINIMO_PARA_APRENDER, obtenerMuestras } from '@/lib/insights'
 import { ParadaDeEmergencia } from './parada'
 import { Aprendizaje } from './aprendizaje'
@@ -26,18 +26,40 @@ const SALIDAS = [
   { estado: 'error', etiqueta: 'Con error' },
 ] as const
 
-function Kpi({ etiqueta, valor, nota }: { etiqueta: string; valor: string; nota?: string }) {
-  return (
-    <div className="border border-linea bg-lienzo p-4">
+function Kpi({
+  etiqueta,
+  valor,
+  nota,
+  href,
+}: {
+  etiqueta: string
+  valor: string
+  nota?: string
+  href?: string
+}) {
+  const cuerpo = (
+    <>
       <p className="etiqueta">{etiqueta}</p>
       <p className="mt-1 font-mono text-3xl leading-none">{valor}</p>
       {nota && <p className="mt-1 text-xs text-tenue">{nota}</p>}
-    </div>
+    </>
+  )
+  // Las reuniones son el resultado del sistema: se llega a ellas desde aquí,
+  // que es donde se mira el número, y no desde un menú que ya tiene bastante.
+  return href ? (
+    <Link href={href} className="block border border-linea bg-lienzo p-4 transition-colors hover:border-tinta">
+      {cuerpo}
+    </Link>
+  ) : (
+    <div className="border border-linea bg-lienzo p-4">{cuerpo}</div>
   )
 }
 
 export default async function Panel() {
   const hace30dias = new Date(Date.now() - 30 * 24 * 3600_000)
+  // El autopiloto y las lecciones son de la empresa con la que se trabaja, no
+  // de un global: pintar otra cosa aquí sería mentir sobre quién está enviando.
+  const empresa = await workspaceActivo()
 
   const [porEstado, contactados, respuestas, reuniones, activas, ajustes, coste, muestras] = await Promise.all([
     db.select({ status: leads.status, n: count() }).from(leads).groupBy(leads.status),
@@ -51,7 +73,7 @@ export default async function Panel() {
       .where(and(eq(touches.direction, 'in'), gte(touches.createdAt, hace30dias))),
     db.select({ n: count() }).from(meetings).where(gte(meetings.createdAt, hace30dias)),
     db.select({ n: count() }).from(campaigns).where(eq(campaigns.status, 'running')),
-    getSettings().catch(() => null),
+    ajustesEfectivos(empresa?.id).catch(() => null),
     // Coste real de OpenRouter: se acumula desde los registros que lo llevan.
     db
       .select({ total: sql<number>`coalesce(sum((${runLogs.payload}->>'coste_usd')::numeric), 0)::float` })
@@ -104,7 +126,7 @@ export default async function Panel() {
           valor={pct(nCualificados, nRespuestas)}
           nota={`${nCualificados} cualificados`}
         />
-        <Kpi etiqueta="Reuniones" valor={String(nReuniones)} nota="agendadas" />
+        <Kpi etiqueta="Reuniones" valor={String(nReuniones)} nota="agendadas · verlas" href="/meetings" />
         <Kpi
           etiqueta="Coste del modelo"
           valor={costeUsd ? `${costeUsd.toFixed(2)} $` : '—'}

@@ -15,6 +15,13 @@
       "when": 1787476089187,
       "tag": "0001_empresa-enriquecimiento",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1787479254840,
+      "tag": "0002_workspaces",
+      "breakpoints": true
     }
   ]
 }

@@ -2,10 +2,10 @@ import { NextResponse } from 'next/server'
 import { asc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '@/lib/db'
-import { icps, sellers } from '@/lib/db/schema'
+import { icps } from '@/lib/db/schema'
 import { parseBody, serverError } from '@/lib/api'
 import { construirSystemPrompt } from '@/lib/agent-prompt'
-import { getSettings } from '@/lib/settings'
+import { ajustesEfectivos } from '@/lib/workspace'
 import { OpenRouterError, chat } from '@/lib/openrouter'
 
 export const dynamic = 'force-dynamic'
@@ -21,7 +21,7 @@ const cuerpo = z.object({
   bookingRules: z.any(),
   canal: z.enum(['linkedin', 'email', 'instagram']).default('linkedin'),
   icpId: z.string().uuid().optional(),
-  sellerId: z.string().uuid().optional(),
+  workspaceId: z.string().uuid().optional(),
   /** Lo que diría el prospecto. */
   mensaje: z.string().min(1, 'Escribe lo que diría el prospecto.'),
   /** Turnos previos, para poder ensayar una conversación y no solo un mensaje. */
@@ -44,15 +44,15 @@ export async function POST(request: Request) {
   const d = body.data
 
   try {
-    const ajustes = await getSettings()
+    // Las lecciones y el contexto son los de ESA empresa: si el ensayo usara los
+    // globales estarías probando un agente distinto del que escribe de verdad.
+    const ajustes = await ajustesEfectivos(d.workspaceId)
 
     const icp = d.icpId
       ? ((await db.select().from(icps).where(eq(icps.id, d.icpId)))[0] ?? null)
       : ((await db.select().from(icps).orderBy(asc(icps.createdAt)).limit(1))[0] ?? null)
 
-    const vendedora = d.sellerId
-      ? ((await db.select().from(sellers).where(eq(sellers.id, d.sellerId)))[0] ?? null)
-      : ((await db.select().from(sellers).orderBy(asc(sellers.createdAt)).limit(1))[0] ?? null)
+    const vendedora = ajustes.workspace
 
     const systemPrompt = construirSystemPrompt(
       {

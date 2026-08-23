@@ -5,17 +5,21 @@
  * está agendada y Telegram está caído, la reunión sigue agendada. Por eso estas
  * funciones devuelven el error en vez de lanzarlo.
  */
-import { getSettings } from './settings'
+import { ajustesEfectivos } from './workspace'
 
 export type ResultadoAviso = { ok: true; messageId: number } | { ok: false; error: string }
 
-export async function avisar(texto: string): Promise<ResultadoAviso> {
+/**
+ * `workspaceId` decide a qué chat va el aviso: cada empresa puede tener el suyo.
+ * Sin él se usa el de la primera, que es el caso de siempre con una sola empresa.
+ */
+export async function avisar(texto: string, workspaceId?: string | null): Promise<ResultadoAviso> {
   const token = process.env.TELEGRAM_BOT_TOKEN
   if (!token) return { ok: false, error: 'TELEGRAM_BOT_TOKEN no está definida.' }
 
   let chatId: string
   try {
-    chatId = (await getSettings()).telegramChatId
+    chatId = (await ajustesEfectivos(workspaceId)).telegramChatId
   } catch {
     chatId = process.env.TELEGRAM_CHAT_ID ?? ''
   }

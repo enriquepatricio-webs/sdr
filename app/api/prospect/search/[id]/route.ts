@@ -14,7 +14,7 @@ import {
 import { jsonError, serverError } from '@/lib/api'
 import { getDatasetItems, getRun, isFinished } from '@/lib/apify'
 import { normalizarCandidato, puntuarCandidatos } from '@/lib/prospect'
-import { getSettings } from '@/lib/settings'
+import { ajustesEfectivos } from '@/lib/workspace'
 
 export const dynamic = 'force-dynamic'
 // La puntuación con el LLM va por lotes y puede tardar.
@@ -60,7 +60,14 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
         .returning({ id: prospectSearches.id })
 
       if (reclamado.length) {
-        await ingerir(id, busqueda.icpId, busqueda.source, run.defaultDatasetId, run.costUsd)
+        await ingerir(
+          id,
+          busqueda.icpId,
+          busqueda.workspaceId,
+          busqueda.source,
+          run.defaultDatasetId,
+          run.costUsd,
+        )
       }
     }
 
@@ -132,12 +139,15 @@ function normalizarLi(url: string | null): string | null {
 async function ingerir(
   searchId: string,
   icpId: string,
+  workspaceId: string | null,
   source: 'linkedin' | 'email' | 'instagram',
   datasetId: string,
   costeApify: number | null,
 ) {
   const [icp] = await db.select().from(icps).where(eq(icps.id, icpId))
-  const ajustes = await getSettings()
+  // El umbral de auto-importación es el de ESA empresa: cada una decide a partir
+  // de qué puntuación un candidato entra solo en su campaña.
+  const ajustes = await ajustesEfectivos(workspaceId)
 
   const crudos = await getDatasetItems(datasetId, { limit: 500 })
   const conocidas = await identidadesConocidas()

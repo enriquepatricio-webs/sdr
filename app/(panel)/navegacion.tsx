@@ -3,24 +3,34 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
+/**
+ * Cuatro sitios, y punto.
+ *
+ * Panel es lo que ha pasado, Campañas lo que está en marcha, Leads las personas
+ * y Ajustes cómo se comporta el agente. El playbook, el ICP, la prospección y
+ * los datos de la empresa siguen existiendo, pero se llega a ellos desde
+ * Ajustes: son cosas que se tocan una vez, no todos los días, y tenerlas
+ * siempre delante convertía el menú en un inventario.
+ *
+ * "Lead magnets" solo aparece si hay un Instagram conectado, porque sin él la
+ * pantalla no puede hacer nada.
+ */
 const RUTAS = [
   { href: '/', etiqueta: 'Panel' },
-  { href: '/playbook', etiqueta: 'Playbook' },
-  { href: '/empresa', etiqueta: 'Empresa' },
-  { href: '/icp', etiqueta: 'ICP' },
-  { href: '/prospectar', etiqueta: 'Prospectar' },
   { href: '/campaigns', etiqueta: 'Campañas' },
   { href: '/leads', etiqueta: 'Leads' },
-  { href: '/meetings', etiqueta: 'Reuniones' },
   { href: '/settings', etiqueta: 'Ajustes' },
 ]
 
-export function Navegacion() {
+export function Navegacion({ hayInstagram }: { hayInstagram: boolean }) {
   const ruta = usePathname()
+  const rutas = hayInstagram
+    ? [...RUTAS.slice(0, 3), { href: '/magnets', etiqueta: 'Lead magnets' }, ...RUTAS.slice(3)]
+    : RUTAS
 
   return (
     <nav className="flex flex-wrap items-center gap-1">
-      {RUTAS.map(({ href, etiqueta }) => {
+      {rutas.map(({ href, etiqueta }) => {
         const activa = href === '/' ? ruta === '/' : ruta.startsWith(href)
         return (
           <Link

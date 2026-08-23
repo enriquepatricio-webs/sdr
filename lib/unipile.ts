@@ -298,3 +298,32 @@ export function interpretarWebhook(payload: WebhookMensaje): EventoEntrante | nu
 export function proveedorDeCanal(canal: 'linkedin' | 'email' | 'instagram'): UnipileProvider {
   return canal === 'linkedin' ? 'LINKEDIN' : canal === 'instagram' ? 'INSTAGRAM' : 'GOOGLE'
 }
+
+/* -------------------------------------------------------------------------- */
+/* Resolver un usuario por su nombre público                                   */
+/* -------------------------------------------------------------------------- */
+
+export type UsuarioUnipile = {
+  provider_id?: string
+  id?: string
+  public_identifier?: string
+  name?: string
+}
+
+/**
+ * De "@ana" al identificador que Unipile necesita para abrir un chat.
+ *
+ * Hace falta porque un comentario de Instagram solo da el nombre de usuario, y
+ * `iniciarChat` pide un `attendee_id`. Se resuelve contra Unipile y no contra el
+ * id numérico que devuelve el scraper: el que tiene que reconocer el id es
+ * Unipile, así que es Unipile quien debe darlo.
+ */
+export async function obtenerUsuario(
+  accountId: string,
+  identificador: string,
+): Promise<UsuarioUnipile> {
+  return pedir<UsuarioUnipile>(
+    `/users/${encodeURIComponent(identificador)}?account_id=${encodeURIComponent(accountId)}`,
+    { method: 'GET' },
+  )
+}

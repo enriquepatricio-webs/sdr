@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { asc, eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { accounts, campaigns, icps, playbooks, sellers } from '@/lib/db/schema'
+import { accounts, campaigns, icps, playbooks, workspaces } from '@/lib/db/schema'
 import { DetalleCampana } from './detalle'
 
 export const dynamic = 'force-dynamic'
@@ -22,7 +22,7 @@ export default async function PaginaCampana({ params }: { params: Promise<{ id: 
       .from(playbooks)
       .orderBy(asc(playbooks.version)),
     db.select({ id: icps.id, name: icps.name }).from(icps).orderBy(asc(icps.createdAt)),
-    db.select({ id: sellers.id, name: sellers.name }).from(sellers).orderBy(asc(sellers.name)),
+    db.select({ id: workspaces.id, name: workspaces.name }).from(workspaces).orderBy(asc(workspaces.name)),
   ])
 
   return (

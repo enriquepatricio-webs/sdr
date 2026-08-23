@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server'
+import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { runLogs } from '@/lib/db/schema'
+import { runLogs, workspaces } from '@/lib/db/schema'
 import { serverError } from '@/lib/api'
 import { destilarLecciones } from '@/lib/insights'
-import { getSettings, setSetting } from '@/lib/settings'
+import { getSettings } from '@/lib/settings'
+import { obtenerWorkspace } from '@/lib/workspace'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -11,14 +13,26 @@ export const maxDuration = 300
 /**
  * Destila lecciones de los mensajes ya enviados y las guarda.
  *
- * A partir de aquí entran en el prompt de todos los agentes. Si no hay volumen
- * suficiente, NO escribe nada: prefiero un agente sin lecciones que uno con
- * reglas inventadas a partir de cuatro mensajes.
+ * A partir de aquí entran en el prompt del agente DE ESA EMPRESA. Si no hay
+ * volumen suficiente, NO escribe nada: prefiero un agente sin lecciones que uno
+ * con reglas inventadas a partir de cuatro mensajes.
+ *
+ * Las lecciones son por empresa porque lo que abre una conversación depende de
+ * lo que se vende. Eso hace que cada una necesite su propio volumen antes de
+ * aprender nada, y es el precio correcto: mejor callar que aplicar a un cliente
+ * lo que funcionó con otro.
  */
-export async function POST() {
+export async function POST(request: Request) {
   try {
+    const empresa = await obtenerWorkspace(
+      new URL(request.url).searchParams.get('workspaceId'),
+    )
+    if (!empresa) {
+      return NextResponse.json({ aprendio: false, motivo: 'sin_empresa' })
+    }
+
     const ajustes = await getSettings()
-    const resultado = await destilarLecciones(ajustes.openrouterModel)
+    const resultado = await destilarLecciones(ajustes.openrouterModel, empresa.id)
 
     if (!resultado.aprendio) {
       return NextResponse.json({
@@ -33,12 +47,15 @@ export async function POST() {
       })
     }
 
-    await setSetting('lessons', resultado.lecciones)
+    await db
+      .update(workspaces)
+      .set({ lessons: resultado.lecciones, updatedAt: new Date() })
+      .where(eq(workspaces.id, empresa.id))
 
     await db.insert(runLogs).values({
       workflow: 'sdr-aprender',
       level: 'info',
-      message: `Lecciones actualizadas sobre ${resultado.lecciones.basadoEn} mensajes`,
+      message: `Lecciones de ${empresa.name} actualizadas sobre ${resultado.lecciones.basadoEn} mensajes`,
       payload: { ...resultado.lecciones, coste_usd: resultado.costeUsd },
     })
 

@@ -1,21 +1,28 @@
-import { asc } from 'drizzle-orm'
+import { count, eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { accounts } from '@/lib/db/schema'
-import { getSettings } from '@/lib/settings'
+import { campaigns } from '@/lib/db/schema'
+import { ajustesEfectivos, workspaceActivo } from '@/lib/workspace'
 import { Ajustes } from './ajustes'
 
 export const dynamic = 'force-dynamic'
 
 export default async function PaginaAjustes() {
-  const [lista, ajustes] = await Promise.all([
-    db.select().from(accounts).orderBy(asc(accounts.createdAt)),
-    getSettings(),
+  const empresa = await workspaceActivo()
+  const [ajustes, activas] = await Promise.all([
+    ajustesEfectivos(empresa?.id),
+    db.select({ n: count() }).from(campaigns).where(eq(campaigns.status, 'running')),
   ])
 
   return (
+    // Igual que en /empresa: al cambiar de empresa hay que remontar, o los
+    // interruptores se quedan enseñando el estado de la anterior.
     <Ajustes
-      cuentas={lista.map((a) => ({ ...a, createdAt: a.createdAt.toISOString() }))}
-      ajustes={ajustes}
+      key={ajustes.workspace?.id ?? 'sin-empresa'}
+      ajustes={{
+        ...ajustes,
+        workspace: ajustes.workspace && { id: ajustes.workspace.id, name: ajustes.workspace.name },
+      }}
+      campanasActivas={Number(activas[0]?.n ?? 0)}
       tieneTelegramEnv={Boolean(process.env.TELEGRAM_CHAT_ID)}
     />
   )

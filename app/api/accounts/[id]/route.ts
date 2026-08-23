@@ -12,6 +12,8 @@ const cuerpo = z.object({
   dailyLimit: z.number().int().min(1).max(MAX_DAILY_LIMIT).optional(),
   hourlyLimit: z.number().int().min(1).max(MAX_HOURLY_LIMIT).nullable().optional(),
   status: z.enum(['active', 'paused', 'disconnected']).optional(),
+  /** Para mover una cuenta que se conectó estando en la empresa equivocada. */
+  workspaceId: z.string().uuid().optional(),
 })
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -45,6 +47,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
     return NextResponse.json(actualizada)
   } catch (err) {
+    // Mover una cuenta que ya usa una campaña de otra empresa rompe la clave
+    // ajena compuesta. Es correcto que falle; solo hay que decir por qué.
+    if (err instanceof Error && err.message.includes('campaigns_account_workspace_fk')) {
+      return jsonError(
+        'Esa cuenta la está usando una campaña de la otra empresa. Cambia la campaña de cuenta antes de moverla.',
+        409,
+      )
+    }
     return serverError(err, 'No se pudo guardar la cuenta')
   }
 }

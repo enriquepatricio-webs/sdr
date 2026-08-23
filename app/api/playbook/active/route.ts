@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server'
 import { asc, eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { campaigns, icps, leads, playbooks, sellers } from '@/lib/db/schema'
+import { campaigns, icps, leads, workspaces } from '@/lib/db/schema'
 import { jsonError, serverError } from '@/lib/api'
 import { construirSystemPrompt } from '@/lib/agent-prompt'
-import { getSettings } from '@/lib/settings'
+import { ajustesEfectivos, playbookActivo } from '@/lib/workspace'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,17 +17,16 @@ export const dynamic = 'force-dynamic'
  * Devuelve el prompt YA MONTADO además de las piezas sueltas: si n8n lo montara
  * por su cuenta, el botón "Probar" del dashboard estaría probando otra cosa.
  *
- * Con `?campaign_id=` coge el ICP y el canal de esa campaña; sin él, el primer
- * ICP y LinkedIn.
+ * Con `?campaign_id=` coge el ICP, el canal y la EMPRESA de esa campaña; sin él,
+ * el primer ICP, LinkedIn y la primera empresa.
+ *
+ * El playbook también se resuelve por empresa: si esa empresa tiene el suyo, ese;
+ * si no, el global, que es el que trae el sistema de fábrica. Gracias a eso dar
+ * de alta una empresa no obliga a escribir un método de venta desde cero.
  */
 export async function GET(request: Request) {
   try {
     const campaignId = new URL(request.url).searchParams.get('campaign_id')
-
-    const [playbook] = await db.select().from(playbooks).where(eq(playbooks.isActive, true))
-    if (!playbook) {
-      return jsonError('No hay ningún playbook activo. Actívalo en /playbook.', 409)
-    }
 
     const leadId = new URL(request.url).searchParams.get('lead_id')
 
@@ -37,10 +36,10 @@ export async function GET(request: Request) {
 
     if (campaignId) {
       const [fila] = await db
-        .select({ campaign: campaigns, icp: icps, seller: sellers })
+        .select({ campaign: campaigns, icp: icps, seller: workspaces })
         .from(campaigns)
         .leftJoin(icps, eq(campaigns.icpId, icps.id))
-        .leftJoin(sellers, eq(campaigns.sellerId, sellers.id))
+        .leftJoin(workspaces, eq(campaigns.workspaceId, workspaces.id))
         .where(eq(campaigns.id, campaignId))
       if (!fila) return jsonError('Esa campaña no existe.', 404)
       icp = fila.icp
@@ -48,7 +47,7 @@ export async function GET(request: Request) {
       canal = fila.campaign.channel
     } else {
       ;[icp] = await db.select().from(icps).orderBy(asc(icps.createdAt)).limit(1)
-      ;[vendedora] = await db.select().from(sellers).orderBy(asc(sellers.createdAt)).limit(1)
+      ;[vendedora] = await db.select().from(workspaces).orderBy(asc(workspaces.createdAt)).limit(1)
     }
 
     // Lo que sabemos de este prospecto en concreto, si se pide.
@@ -61,7 +60,12 @@ export async function GET(request: Request) {
       enriquecimiento = lead?.enrichment ?? null
     }
 
-    const ajustes = await getSettings()
+    const ajustes = await ajustesEfectivos(vendedora?.id)
+
+    const playbook = await playbookActivo(vendedora?.id)
+    if (!playbook) {
+      return jsonError('No hay ningún playbook activo. Actívalo en /playbook.', 409)
+    }
 
     return NextResponse.json({
       playbook,

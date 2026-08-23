@@ -98,12 +98,17 @@ async function main() {
     `select table_name from information_schema.tables where table_schema='public' order by 1`,
   )
   const names = tables.rows.map((r) => r.table_name)
-  await ok('12 tablas: las 9 del spec, las dos de prospección y la de empresas', async () =>
-    assert.deepEqual(names, [
+  // Se ordenan las dos con el mismo criterio: el `order by` de Postgres depende
+  // del collation y coloca `lead_magnets` y `leads` en distinto orden que JS.
+  await ok('15 tablas: las 9 del spec, prospección, empresas y lead magnets', async () =>
+    assert.deepEqual([...names].sort(), [
       'accounts',
       'campaigns',
+      'followers',
       'icps',
+      'lead_magnets',
       'leads',
+      'magnet_contacts',
       'meetings',
       'playbooks',
       'prospect_searches',
@@ -112,7 +117,7 @@ async function main() {
       'sellers',
       'settings',
       'touches',
-    ]),
+    ].sort()),
   )
 
   const status = await db.query<{ enumlabel: string }>(
@@ -748,6 +753,37 @@ async function main() {
     assert.ok(
       fallo,
       'el UPDATE de una sola sentencia ya no falla: revisa si sigue haciendo falta lib/playbook.ts',
+    )
+  })
+
+  /* Y el ámbito: activar el playbook de una empresa NO puede apagar el global,
+     que es el que usan las demás. Se desactiva solo dentro del mismo ámbito. */
+
+  await ok('activar el de una empresa deja intacto el playbook global', async () => {
+    const ambPg = new PGlite()
+    for (const stmt of statements) await ambPg.exec(stmt)
+    await ambPg.exec(`insert into sellers (id,name,context) values
+      ('bbbb0000-0000-0000-0000-000000000001','Cliente A','x'),
+      ('bbbb0000-0000-0000-0000-000000000002','Cliente B','x')`)
+    await ambPg.exec(`insert into playbooks (id,name,version,system_prompt,offer,booking_rules,workspace_id,is_active) values
+      ('cccc0000-0000-0000-0000-000000000000','global',1,'sp','of','{}'::jsonb,null,true),
+      ('cccc0000-0000-0000-0000-000000000001','de A',1,'sp','of','{}'::jsonb,'bbbb0000-0000-0000-0000-000000000001',false)`)
+
+    const id = 'cccc0000-0000-0000-0000-000000000001'
+    await ambPg.exec(`begin;
+      update playbooks p set is_active = false
+        where p.is_active and p.id <> '${id}'
+          and p.workspace_id is not distinct from (select workspace_id from playbooks where id = '${id}');
+      update playbooks set is_active = true where id = '${id}';
+    commit;`)
+
+    const r = await ambPg.query<{ name: string }>(
+      `select name from playbooks where is_active order by name`,
+    )
+    assert.deepEqual(
+      r.rows.map((x) => x.name),
+      ['de A', 'global'],
+      'activar el playbook de una empresa apagó el global: el resto de empresas se queda sin método de venta',
     )
   })
 

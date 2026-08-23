@@ -31,7 +31,7 @@ function prueba(nombre: string, fn: () => void) {
   try { fn(); ok++ } catch (e) { fallos.push(`${nombre}\n    ${(e as Error).message.split('\n')[0]}`) }
 }
 
-const FICHEROS = ['sdr-outbound', 'sdr-inbound', 'sdr-followup']
+const FICHEROS = ['sdr-outbound', 'sdr-inbound', 'sdr-followup', 'sdr-magnets']
 const workflows: Record<string, Workflow> = {}
 
 for (const f of FICHEROS) {
@@ -112,12 +112,25 @@ for (const f of FICHEROS) {
     }
   })
 
-  prueba(`${f}: los envíos van por /api/messages/send`, () => {
-    const envios = w.nodes.filter((n) =>
-      JSON.stringify(n.parameters ?? {}).includes('/api/messages/send'),
+  /**
+   * Todo lo que llega a una persona sale del dashboard, nunca de n8n.
+   *
+   * W2 lo hace a través de una herramienta del agente y W4 ni siquiera envía
+   * desde aquí: delega el ciclo entero en `/api/magnets/run`, que por dentro
+   * usa el mismo registrar → enviar → confirmar. Lo que esta comprobación
+   * defiende de verdad es que ninguno de los cuatro tenga un nodo que hable con
+   * Unipile por su cuenta; de eso se encarga la comprobación de más arriba.
+   */
+  const DELEGAN = { 'sdr-inbound': 'herramienta del agente', 'sdr-magnets': '/api/magnets/run' }
+  prueba(`${f}: los envíos van por la API del dashboard`, () => {
+    const texto = JSON.stringify(w)
+    const delega = f in DELEGAN
+    assert.ok(
+      texto.includes('/api/messages/send') || delega,
+      'no hay ningún nodo que envíe ni delegue el envío en la API',
     )
-    if (f !== 'sdr-inbound') {
-      assert.ok(envios.length > 0, 'no hay ningún nodo que envíe')
+    if (f === 'sdr-magnets') {
+      assert.ok(texto.includes('/api/magnets/run'), 'W4 no llama al ciclo de los imanes')
     }
   })
 }
@@ -147,9 +160,15 @@ prueba('W2 descarta nuestros propios mensajes antes de invocar al agente', () =>
   assert.match(js, /attendee_provider_id/, 'no compara sender.attendee_provider_id')
 })
 
+/* n8n renombró el nodo de herramienta HTTP: antes
+ * "@n8n/n8n-nodes-langchain.toolHttpRequest", ahora "n8n-nodes-base.httpRequestTool".
+ * Se aceptan las dos formas para no depender del nombre viejo. */
+const esHerramientaHttp = (n: Nodo) =>
+  n.type.includes('toolHttpRequest') || n.type.includes('httpRequestTool')
+
 prueba('W2 lleva las seis herramientas del spec', () => {
   const w = workflows['sdr-inbound']
-  const tools = w.nodes.filter((n) => n.type.includes('toolHttpRequest')).map((n) => n.name)
+  const tools = w.nodes.filter((n) => esHerramientaHttp(n)).map((n) => n.name)
   for (const t of [
     'registrar_cualificacion', 'consultar_disponibilidad', 'agendar_reunion',
     'responder', 'descartar', 'escalar_humano',
@@ -160,7 +179,7 @@ prueba('W2 lleva las seis herramientas del spec', () => {
 
 prueba('W2 conecta todas las herramientas al agente', () => {
   const w = workflows['sdr-inbound']
-  const tools = w.nodes.filter((n) => n.type.includes('toolHttpRequest'))
+  const tools = w.nodes.filter((n) => esHerramientaHttp(n))
   for (const t of tools) {
     const conectada = (w.connections[t.name]?.ai_tool ?? []).some((s) =>
       s.some((c) => c.node === 'Agente SDR'),
@@ -181,6 +200,33 @@ prueba('W3 le pasa el hilo previo al agente para que no se repita', () => {
   assert.ok(texto.includes('/api/leads/resolve'), 'W3 no carga el historial')
   assert.ok(texto.includes('mode=seguimiento'), 'W3 no pide seguimientos')
   assert.ok(texto.includes('NO repitas'), 'no se le dice al agente que no se repita')
+})
+
+prueba('W1 lee el perfil del prospecto ANTES de redactarle', () => {
+  const w = workflows['sdr-outbound']
+  const enriquecer = w.nodes.find((n) =>
+    String((n.parameters as { url?: string })?.url ?? '').includes('/enrich'),
+  )
+  assert.ok(enriquecer, 'W1 no enriquece: escribiría un mensaje genérico a todo el mundo')
+
+  // Y tiene que ir por delante del que redacta, no en paralelo ni después.
+  const siguientes = w.connections[enriquecer.name]?.main?.[0]?.map((c) => c.node) ?? []
+  assert.ok(
+    siguientes.includes('Playbook activo'),
+    'el enriquecimiento no desemboca en el playbook: el agente no vería lo scrapeado',
+  )
+})
+
+prueba('W1 y W3 piden el playbook de LA EMPRESA de la campaña', () => {
+  for (const f of ['sdr-outbound', 'sdr-followup']) {
+    const nodo = workflows[f].nodes.find((n) => n.name === 'Playbook activo')!
+    const url = String((nodo.parameters as { url?: string }).url ?? '')
+    assert.ok(
+      url.includes('campaign_id='),
+      `${f} pide el playbook sin campaign_id: con varias empresas escribiría de parte de la equivocada`,
+    )
+    assert.ok(url.includes('lead_id='), `${f} no pasa lead_id: el mensaje saldría sin personalizar`)
+  }
 })
 
 prueba('todos apuntan al dominio de producción', () => {

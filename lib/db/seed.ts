@@ -20,7 +20,7 @@ import {
   accounts,
   campaigns,
   icps,
-  sellers,
+  workspaces,
   leads,
   meetings,
   playbooks,
@@ -455,7 +455,7 @@ export async function runSeed(
 
   // La empresa para la que se vende. El playbook es el método; esto, el contexto.
   const [empresa] = await db
-    .insert(sellers)
+    .insert(workspaces)
     .values({
       name: 'Tu Empresa',
       website: null,
@@ -468,6 +468,7 @@ export async function runSeed(
     .insert(accounts)
     .values({
       unipileAccountId: 'demo-unipile-account',
+      workspaceId: empresa.id,
       provider: 'linkedin',
       displayName: 'LinkedIn (demo, sin conectar)',
       dailyLimit: DEFAULT_DAILY_LIMIT,
@@ -480,6 +481,7 @@ export async function runSeed(
   // documenta 100 acciones/día y no más de 10 por hora.
   await db.insert(accounts).values({
     unipileAccountId: 'demo-unipile-instagram',
+    workspaceId: empresa.id,
     provider: 'instagram',
     displayName: 'Instagram (demo, sin conectar)',
     dailyLimit: 30,
@@ -494,7 +496,7 @@ export async function runSeed(
       status: 'draft',
       icpId: icp.id,
       playbookId: playbook.id,
-      sellerId: empresa.id,
+      workspaceId: empresa.id,
       accountId: account.id,
       channel: 'linkedin',
       dailyCap: DEFAULT_DAILY_LIMIT,

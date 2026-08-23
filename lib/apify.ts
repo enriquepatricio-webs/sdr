@@ -198,4 +198,17 @@ export const ACTORES_LECTURA = {
   web: 'apify/website-content-crawler',
   perfilLinkedin: 'harvestapi/linkedin-profile-scraper',
   perfilInstagram: 'apify/instagram-profile-scraper',
+  /**
+   * Comentarios de una publicación o reel. Entrada: `directUrls` (array de
+   * URLs) y `resultsLimit`. Es el oficial de Apify y el más usado, que aquí
+   * importa más que ser barato: si el actor cambia de forma, el imán deja de
+   * detectar a nadie y no se entera nadie.
+   */
+  comentariosInstagram: 'apify/instagram-comment-scraper',
+  /**
+   * Seguidores de una cuenta. Entrada: `usernames`, `dataToScrape: 'followers'`
+   * y `resultsLimit`. Se scrapea NUESTRA lista una vez y se cachea; mirar a
+   * quién sigue cada persona sería una ejecución por contacto.
+   */
+  seguidoresInstagram: 'apify/instagram-followers-following-scraper',
 } as const

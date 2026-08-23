@@ -1,5 +1,5 @@
 {
-  "name": "sdr-outbound",
+  "name": "SDR · 1 · Primer toque en frío",
   "nodes": [
     {
       "parameters": {
@@ -12,13 +12,13 @@
           ]
         }
       },
-      "id": "cron-30",
+      "id": "f50f4d07-a344-45ff-8c3f-103daede9be8",
       "name": "Cada 30 minutos",
       "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.2,
+      "typeVersion": 1.3,
       "position": [
-        260,
-        200
+        0,
+        0
       ]
     },
     {
@@ -31,169 +31,113 @@
           "timeout": 120000
         }
       },
-      "id": "reabastecer-si-hace-falta",
+      "id": "fed967ca-2de4-4a4b-bd28-3a2e6d689f32",
       "name": "Reabastecer si hace falta",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "typeVersion": 4.4,
       "position": [
-        480,
-        200
+        224,
+        0
       ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "REEMPLAZAR",
-          "name": "SDR API (x-api-key)"
-        }
-      },
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "method": "GET",
+        "url": "=https://sdr.thecotocompany.com/api/playbook/active?campaign_id={{ $('Lead a lead').item.json.campaignId }}&lead_id={{ $('Lead a lead').item.json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "800abd20-a4c7-4f38-a244-f05ede5191bd",
+      "name": "Playbook activo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1328,
+        0
+      ],
+      "executeOnce": false
+    },
+    {
+      "parameters": {
         "url": "https://sdr.thecotocompany.com/api/leads/next?mode=primer_toque&limit=25",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {
-          "timeout": 120000
+          "timeout": 60000
         }
       },
-      "id": "siguiente-lote",
+      "id": "ebdd1878-8bf1-43e4-959a-afb339e5c1a7",
       "name": "Siguiente lote",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "typeVersion": 4.4,
       "position": [
-        700,
-        200
+        672,
+        0
       ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "REEMPLAZAR",
-          "name": "SDR API (x-api-key)"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "version": 2
-          },
-          "conditions": [
-            {
-              "leftValue": "={{ $json.leads.length }}",
-              "rightValue": 0,
-              "operator": {
-                "type": "number",
-                "operation": "gt"
-              }
-            }
-          ],
-          "combinator": "and"
-        }
-      },
-      "id": "hay-leads",
-      "name": "¿Hay leads?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        920,
-        200
-      ]
+      "executeOnce": true
     },
     {
       "parameters": {
         "fieldToSplitOut": "leads",
         "options": {}
       },
-      "id": "separar",
+      "id": "6dab055b-4ce1-4d3c-8d0e-e68489c708b1",
       "name": "Un lead por item",
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
       "position": [
-        1140,
-        200
+        880,
+        0
       ]
     },
     {
-      "parameters": {
-        "options": {
-          "reset": false
-        },
-        "batchSize": 1
-      },
-      "id": "bucle",
-      "name": "Lead a lead",
-      "type": "n8n-nodes-base.splitInBatches",
-      "typeVersion": 3,
+      "parameters": {},
+      "id": "42b2d27b-4e49-461e-91a9-29d021d1ee40",
+      "name": "Lote terminado",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
       "position": [
-        1360,
-        200
+        1552,
+        -208
       ]
-    },
-    {
-      "parameters": {
-        "method": "GET",
-        "url": "https://sdr.thecotocompany.com/api/playbook/active",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "options": {
-          "timeout": 120000
-        }
-      },
-      "id": "playbook-activo",
-      "name": "Playbook activo",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1580,
-        200
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "REEMPLAZAR",
-          "name": "SDR API (x-api-key)"
-        }
-      }
     },
     {
       "parameters": {
         "promptType": "define",
-        "text": "={{ \"Escribe el PRIMER mensaje en frío a este prospecto.\\n\\nNombre: \" + $('Lead a lead').item.json.fullName + \"\\nTitular: \" + ($('Lead a lead').item.json.headline || \"sin titular\") + \"\\nEmpresa: \" + ($('Lead a lead').item.json.company || \"sin empresa\") + \"\\nDatos del perfil: \" + JSON.stringify($('Lead a lead').item.json.raw) + \"\\n\\nEs el primer contacto: rompe el hielo reconociendo que es en frío, ponte de su lado, pide permiso y cierra con una pregunta. Máximo 4 líneas. Devuelve SOLO el texto del mensaje, sin comillas ni explicaciones.\" }}",
+        "text": "=Escribe el PRIMER mensaje en frío a este prospecto.\n\nNombre: {{ $('Lead a lead').item.json.fullName }}\nTitular: {{ $('Lead a lead').item.json.headline || 'sin titular' }}\nEmpresa: {{ $('Lead a lead').item.json.company || 'sin empresa' }}\n\nLO QUE HEMOS AVERIGUADO DE ÉL (léelo antes de escribir):\n{{ $('Enriquecer prospecto').item.json.resumen || '(no se pudo leer nada; escribe con lo de arriba y no inventes detalles)' }}\n\nEs el primer contacto. Rompe el hielo reconociendo que es en frío, ponte de su lado, pide permiso y cierra con una pregunta.\n\nUsa UN detalle concreto de lo averiguado, bien traído y sin recitarlo. Si no hay nada averiguado, no te inventes ninguno.\n\nMáximo 4 líneas. Devuelve SOLO el texto del mensaje, sin comillas ni explicaciones.",
         "options": {
-          "systemMessage": "={{ $json.systemPrompt }}"
+          "systemMessage": "={{ $('Playbook activo').item.json.systemPrompt }}",
+          "maxIterations": 3
         }
       },
-      "id": "agente-1",
+      "id": "c538690a-7cb8-41d7-973d-3e8e8f917b53",
       "name": "Redactar primer toque",
       "type": "@n8n/n8n-nodes-langchain.agent",
-      "typeVersion": 1.7,
+      "typeVersion": 3.1,
       "position": [
-        1800,
-        200
+        1552,
+        0
       ]
     },
     {
       "parameters": {
-        "model": "={{ $json.modelo || \"anthropic/claude-sonnet-5\" }}",
+        "model": "deepseek/deepseek-v4-flash",
         "options": {
+          "maxTokens": 4000,
           "temperature": 0.7
         }
       },
-      "id": "openrouter",
+      "id": "0c908d38-019d-454f-a469-6ca25a7bd546",
       "name": "OpenRouter",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
       "typeVersion": 1,
       "position": [
-        1800,
-        360
-      ],
-      "credentials": {
-        "openRouterApi": {
-          "id": "REEMPLAZAR",
-          "name": "OpenRouter"
-        }
-      }
+        1552,
+        208
+      ]
     },
     {
       "parameters": {
@@ -201,54 +145,69 @@
         "url": "https://sdr.thecotocompany.com/api/messages/send",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
-        "options": {
-          "timeout": 120000
-        },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ leadId: $('Lead a lead').item.json.id, texto: $json.output, step: 1, tipo: $('Lead a lead').item.json.linkedinUrl ? \"invitacion\" : \"mensaje\", nuevoEstado: \"contactado\", nextActionAt: new Date(Date.now() + 3*24*3600*1000).toISOString() }) }}"
-      },
-      "id": "enviar-o-dejar-borrador-",
-      "name": "Enviar (o dejar borrador)",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2020,
-        200
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "REEMPLAZAR",
-          "name": "SDR API (x-api-key)"
+        "jsonBody": "={ \"leadId\": \"{{ $('Lead a lead').item.json.id }}\", \"texto\": {{ JSON.stringify($json.output) }}, \"step\": 1, \"tipo\": \"mensaje\", \"nuevoEstado\": \"contactado\", \"nextActionAt\": \"{{ $now.plus(3, 'days').toISO() }}\" }",
+        "options": {
+          "timeout": 60000
         }
       },
+      "id": "2f4e77c5-1477-46d4-bcfd-8f06af593a61",
+      "name": "Enviar o dejar borrador",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1856,
+        0
+      ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "amount": "={{ Math.floor(Math.random() * 141) + 40 }}",
-        "unit": "seconds"
+        "amount": "={{ Math.floor(Math.random() * 141) + 40 }}"
       },
-      "id": "espera",
+      "id": "21bea70a-e1aa-4950-be8b-c2ef23252ca7",
       "name": "Esperar 40-180 s",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [
-        2240,
-        200
+        2032,
+        0
       ],
-      "webhookId": "espera-outbound"
+      "webhookId": "bc8d4dd5-71ab-498d-a53c-477ad9fc0d46"
     },
     {
-      "parameters": {},
-      "id": "fin-1",
-      "name": "Nada que hacer",
-      "type": "n8n-nodes-base.noOp",
-      "typeVersion": 1,
+      "parameters": {
+        "options": {}
+      },
+      "id": "46ab042c-6abf-4b85-94c9-08dedb691246",
+      "name": "Lead a lead",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
       "position": [
-        1140,
-        520
+        1104,
+        0
       ]
+    },
+    {
+      "id": "1f9195b1-1f15-430f-8663-6e38b9368d80",
+      "name": "Enriquecer prospecto",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1210,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://sdr.thecotocompany.com/api/leads/{{ $json.id }}/enrich",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 240000
+        }
+      },
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -263,40 +222,11 @@
         ]
       ]
     },
-    "Reabastecer si hace falta": {
-      "main": [
-        [
-          {
-            "node": "Siguiente lote",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Siguiente lote": {
       "main": [
         [
           {
-            "node": "¿Hay leads?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "¿Hay leads?": {
-      "main": [
-        [
-          {
             "node": "Un lead por item",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Nada que hacer",
             "type": "main",
             "index": 0
           }
@@ -314,23 +244,11 @@
         ]
       ]
     },
-    "Lead a lead": {
-      "main": [
-        [],
-        [
-          {
-            "node": "Playbook activo",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Playbook activo": {
+    "Redactar primer toque": {
       "main": [
         [
           {
-            "node": "Redactar primer toque",
+            "node": "Enviar o dejar borrador",
             "type": "main",
             "index": 0
           }
@@ -348,18 +266,7 @@
         ]
       ]
     },
-    "Redactar primer toque": {
-      "main": [
-        [
-          {
-            "node": "Enviar (o dejar borrador)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Enviar (o dejar borrador)": {
+    "Enviar o dejar borrador": {
       "main": [
         [
           {
@@ -380,10 +287,62 @@
           }
         ]
       ]
+    },
+    "Lead a lead": {
+      "main": [
+        [
+          {
+            "node": "Lote terminado",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Enriquecer prospecto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reabastecer si hace falta": {
+      "main": [
+        [
+          {
+            "node": "Siguiente lote",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enriquecer prospecto": {
+      "main": [
+        [
+          {
+            "node": "Playbook activo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Playbook activo": {
+      "main": [
+        [
+          {
+            "node": "Redactar primer toque",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
-    "executionOrder": "v1"
-  },
-  "pinData": {}
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate"
+  }
 }

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { runLogs, sellers } from '@/lib/db/schema'
+import { runLogs, workspaces } from '@/lib/db/schema'
 import { jsonError, serverError } from '@/lib/api'
 import { leerWeb } from '@/lib/scrape'
 
@@ -18,7 +18,7 @@ export const maxDuration = 300
 export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   try {
-    const [empresa] = await db.select().from(sellers).where(eq(sellers.id, id))
+    const [empresa] = await db.select().from(workspaces).where(eq(workspaces.id, id))
     if (!empresa) return jsonError('Esa empresa no existe.', 404)
     if (!empresa.website) return jsonError('Esta empresa no tiene web configurada.', 400)
 
@@ -36,9 +36,9 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     }
 
     const [actualizada] = await db
-      .update(sellers)
+      .update(workspaces)
       .set({ scrapedContext: web.texto, scrapedAt: new Date() })
-      .where(eq(sellers.id, id))
+      .where(eq(workspaces.id, id))
       .returning()
 
     return NextResponse.json({

@@ -1,105 +1,46 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import type { Settings } from '@/lib/settings'
+import { Interruptor } from '@/components/interruptor'
+import { ParadaDeEmergencia } from '../parada'
 
-type Cuenta = {
-  id: string
-  unipileAccountId: string
-  provider: 'linkedin' | 'email' | 'instagram'
-  displayName: string
-  dailyLimit: number
-  hourlyLimit: number | null
-  status: 'active' | 'paused' | 'disconnected'
-  createdAt: string
-}
+type AjustesEfectivos = Settings & { workspace: { id: string; name: string } | null }
 
-type Modelo = {
-  id: string
-  name: string
-  promptPerMillion: number
-  completionPerMillion: number
-  contextLength: number
-}
+type Modelo = { id: string; promptPerMillion: number; completionPerMillion: number; contextLength: number }
 
-const entrada = 'w-full border border-linea-fuerte bg-papel px-3 py-2 text-sm outline-none focus:border-ensayo'
+const entrada =
+  'w-full border border-linea-fuerte bg-papel px-3 py-2 text-sm outline-none focus:border-ensayo'
+
+/** A dónde se baja cuando de verdad hace falta. No es el camino normal. */
+const DETALLE = [
+  { href: '/empresa', etiqueta: 'Datos de la empresa', nota: 'contexto, web y oferta' },
+  { href: '/playbook', etiqueta: 'Playbook', nota: 'cómo vende el agente' },
+  { href: '/icp', etiqueta: 'ICP', nota: 'a quién considera buen cliente' },
+  { href: '/prospectar', etiqueta: 'Prospectar a mano', nota: 'buscar leads ahora' },
+]
 
 export function Ajustes({
-  cuentas: inicial,
-  ajustes: ajustesIniciales,
+  ajustes: iniciales,
+  campanasActivas,
   tieneTelegramEnv,
 }: {
-  cuentas: Cuenta[]
-  ajustes: Settings
+  ajustes: AjustesEfectivos
+  campanasActivas: number
   tieneTelegramEnv: boolean
 }) {
   const router = useRouter()
-  const [cuentas, setCuentas] = useState(inicial)
-  const [ajustes, setAjustes] = useState(ajustesIniciales)
+  const [ajustes, setAjustes] = useState(iniciales)
   const [modelos, setModelos] = useState<Modelo[] | null>(null)
   const [guardando, guardar] = useTransition()
   const [aviso, setAviso] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [confirmandoAutopiloto, setConfirmando] = useState(false)
-  const [conectando, setConectando] = useState<string | null>(null)
-  const [sincronizando, setSincronizando] = useState(false)
   const [buscandoChat, setBuscandoChat] = useState(false)
-  const [chats, setChats] = useState<{ id: number; tipo: string; nombre: string }[] | null>(null)
+  const [chats, setChats] = useState<{ id: string; tipo: string; nombre: string }[] | null>(null)
   const [pistaChat, setPistaChat] = useState<string | null>(null)
-
-  async function identificarChat() {
-    setBuscandoChat(true)
-    setChats(null)
-    setPistaChat(null)
-    try {
-      const res = await fetch('/api/telegram/identify')
-      const json = await res.json()
-      if (!res.ok) { setPistaChat(json.error ?? 'No se pudo consultar Telegram.'); return }
-      setChats(json.chats ?? [])
-      if (!json.chats?.length) setPistaChat(json.pista ?? 'Escríbele /start al bot y vuelve a buscar.')
-    } finally { setBuscandoChat(false) }
-  }
-
-  async function conectar(proveedor: 'LINKEDIN' | 'INSTAGRAM' | 'GOOGLE') {
-    setConectando(proveedor)
-    setAviso(null)
-    try {
-      const res = await fetch('/api/accounts/connect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ proveedor }),
-      })
-      const json = await res.json()
-      if (!res.ok) { setAviso(json.error ?? 'No se pudo generar el enlace.'); return }
-      // Navegación en la misma pestaña, no window.open: el await rompe la cadena
-      // del gesto del usuario y Safari bloquea la ventana emergente, con lo que
-      // al pulsar no pasaba nada. Al terminar, Unipile devuelve a /conectado.
-      window.location.href = json.url
-    } finally { setConectando(null) }
-  }
-
-  async function sincronizar() {
-    setSincronizando(true)
-    setAviso(null)
-    try {
-      const res = await fetch('/api/accounts/sync', { method: 'POST' })
-      const json = await res.json()
-      if (!res.ok) { setAviso(json.error ?? 'No se pudo sincronizar.'); return }
-      const partes: string[] = []
-      if (json.nuevas.length) {
-        partes.push(`${json.nuevas.length} nueva(s): ${json.nuevas.join(', ')}. Entran en pausa.`)
-      }
-      if (json.actualizadas?.length) partes.push(json.actualizadas.join(', '))
-      // Sin esto, conectar un WhatsApp o un Telegram salía como "sin cuentas
-      // nuevas" aunque el servidor supiera exactamente por qué lo descartó.
-      if (json.ignoradas?.length) {
-        partes.push(`Ignoradas por canal no soportado: ${json.ignoradas.join(', ')}.`)
-      }
-      if (!partes.length) partes.push(`Sin cambios (${json.encontradas} cuentas vistas en Unipile).`)
-      setAviso(partes.join(' '))
-      router.refresh()
-    } finally { setSincronizando(false) }
-  }
 
   useEffect(() => {
     fetch('/api/openrouter/models')
@@ -111,73 +52,99 @@ export function Ajustes({
   function guardarAjustes(cambios: Partial<Settings>) {
     guardar(async () => {
       setAviso(null)
+      setError(null)
       const res = await fetch('/api/settings', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cambios),
+        body: JSON.stringify({ ...cambios, workspaceId: ajustes.workspace?.id }),
       })
       if (res.ok) {
         setAjustes(await res.json())
         setAviso('Guardado.')
         router.refresh()
-      } else setAviso((await res.json()).error ?? 'No se pudo guardar.')
+      } else setError((await res.json()).error ?? 'No se pudo guardar.')
     })
   }
 
-  function guardarCuenta(id: string, cambios: Partial<Cuenta>) {
-    guardar(async () => {
-      const res = await fetch(`/api/accounts/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cambios),
-      })
-      if (res.ok) {
-        const actualizada = await res.json()
-        setCuentas(cuentas.map((c) => (c.id === id ? { ...c, ...actualizada } : c)))
-        setAviso('Guardado.')
-      } else setAviso((await res.json()).error ?? 'No se pudo guardar la cuenta.')
-    })
+  async function identificarChat() {
+    setBuscandoChat(true)
+    setChats(null)
+    setPistaChat(null)
+    try {
+      const res = await fetch('/api/telegram/identify')
+      const json = await res.json()
+      if (!res.ok) {
+        setPistaChat(json.error ?? 'No se pudo consultar Telegram.')
+        return
+      }
+      setChats(json.chats ?? [])
+      if (!json.chats?.length) {
+        setPistaChat(json.pista ?? 'Escríbele /start al bot y vuelve a pulsar.')
+      }
+    } finally {
+      setBuscandoChat(false)
+    }
   }
 
   const modeloActual = modelos?.find((m) => m.id === ajustes.openrouterModel)
 
   return (
-    <div className="space-y-8">
+    <div className="mx-auto max-w-3xl space-y-8">
       <header className="flex items-end justify-between gap-4">
         <div>
           <p className="etiqueta">Ajustes</p>
           <h1 className="mt-1 text-3xl font-semibold tracking-tight">Cómo opera el agente</h1>
         </div>
         {aviso && <p className="text-sm text-ok">{aviso}</p>}
+        {error && <p className="text-sm text-vivo">{error}</p>}
       </header>
 
-      {/* Autopiloto: el ajuste con consecuencias. */}
-      <section
-        className={`border-2 p-5 ${ajustes.autopilot ? 'border-vivo bg-vivo-suave' : 'border-linea bg-lienzo'}`}
-      >
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h2 className={`text-lg font-semibold ${ajustes.autopilot ? 'text-vivo' : ''}`}>
-              Autopiloto {ajustes.autopilot ? 'encendido' : 'apagado'}
-            </h2>
-            <p className="mt-1 max-w-lg text-sm text-apagado">
-              {ajustes.autopilot
-                ? 'El agente envía los mensajes él solo, sin pasar por ti. Los prospectos los reciben en cuanto los escribe.'
-                : 'El agente redacta y deja el mensaje en el hilo del lead como borrador. No sale nada hasta que tú lo apruebes.'}
-            </p>
+      {/* ------------------------------------------------------------------ */}
+      {/* Lo que decide cada empresa por su cuenta.                            */}
+      {/* ------------------------------------------------------------------ */}
+      <section className="space-y-5">
+        <h2 className="etiqueta border-b border-linea pb-2">
+          {ajustes.workspace ? ajustes.workspace.name : 'Tu empresa'}
+        </h2>
+
+        {!ajustes.workspace && (
+          <p className="border-l-2 border-aviso bg-papel px-3 py-2 text-sm text-aviso">
+            Todavía no has dado de alta ninguna empresa, así que esto no tiene dónde guardarse.{' '}
+            <Link href="/empresa" className="underline">
+              Empieza por ahí
+            </Link>
+            .
+          </p>
+        )}
+
+        {/* El único ajuste con consecuencias irreversibles del sistema. */}
+        <div
+          className={`border-2 p-5 ${
+            ajustes.autopilot ? 'border-vivo bg-vivo-suave' : 'border-linea bg-lienzo'
+          }`}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="max-w-lg">
+              <h3 className={`text-lg font-semibold ${ajustes.autopilot ? 'text-vivo' : ''}`}>
+                Autopiloto
+              </h3>
+              <p className="mt-1 text-sm text-apagado">
+                {ajustes.autopilot
+                  ? 'El agente envía los mensajes él solo. Los prospectos los reciben en cuanto los escribe.'
+                  : 'El agente redacta y deja el mensaje como borrador. No sale nada hasta que tú lo apruebes.'}
+              </p>
+            </div>
+            <Interruptor
+              etiqueta={ajustes.autopilot ? 'Enviando' : 'Apagado'}
+              activo={ajustes.autopilot}
+              peligroso
+              desactivado={guardando}
+              onCambiar={(v) => (v ? setConfirmando(true) : guardarAjustes({ autopilot: false }))}
+            />
           </div>
 
-          {ajustes.autopilot ? (
-            <button
-              type="button"
-              disabled={guardando}
-              onClick={() => guardarAjustes({ autopilot: false })}
-              className="border-2 border-vivo bg-vivo px-4 py-2.5 text-sm font-bold text-white uppercase disabled:opacity-50"
-            >
-              Apagar
-            </button>
-          ) : confirmandoAutopiloto ? (
-            <div className="max-w-sm border-2 border-vivo bg-vivo-suave p-3">
+          {confirmandoAutopiloto && !ajustes.autopilot && (
+            <div className="mt-4 border-2 border-vivo bg-lienzo p-3">
               <p className="text-sm font-medium text-vivo">
                 A partir de aquí los mensajes salen a personas reales sin que los veas antes.
               </p>
@@ -185,88 +152,157 @@ export function Ajustes({
                 <button
                   type="button"
                   disabled={guardando}
-                  onClick={() => { guardarAjustes({ autopilot: true }); setConfirmando(false) }}
-                  className="bg-vivo px-3 py-2 text-sm font-bold text-white disabled:opacity-50"
+                  onClick={() => {
+                    guardarAjustes({ autopilot: true })
+                    setConfirmando(false)
+                  }}
+                  className="bg-vivo px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
                 >
                   Encender
                 </button>
-                <button type="button" onClick={() => setConfirmando(false)} className="px-3 py-2 text-sm text-apagado">
+                <button
+                  type="button"
+                  onClick={() => setConfirmando(false)}
+                  className="px-3 py-2 text-sm text-apagado hover:text-tinta"
+                >
                   Cancelar
                 </button>
               </div>
             </div>
-          ) : (
+          )}
+        </div>
+
+        {/* Telegram: por dónde te avisa. */}
+        <div className="border border-linea bg-lienzo p-5">
+          <label htmlFor="telegram" className="text-base font-semibold">
+            Avisos por Telegram
+          </label>
+          <p className="mt-0.5 text-sm text-tenue">
+            {tieneTelegramEnv
+              ? 'Hay uno en el entorno. Lo que pongas aquí manda sobre él.'
+              : 'Escríbele algo a tu bot y pulsa Identificar: el número lo saca él.'}
+          </p>
+          <div className="mt-2 flex gap-2">
+            <input
+              id="telegram"
+              value={ajustes.telegramChatId}
+              onChange={(e) => setAjustes({ ...ajustes, telegramChatId: e.target.value })}
+              onBlur={() => guardarAjustes({ telegramChatId: ajustes.telegramChatId })}
+              className={`${entrada} font-mono`}
+            />
             <button
               type="button"
-              onClick={() => setConfirmando(true)}
-              className="border-2 border-linea-fuerte px-4 py-2.5 text-sm font-semibold hover:border-vivo hover:text-vivo"
+              onClick={identificarChat}
+              disabled={buscandoChat}
+              className="shrink-0 border border-linea-fuerte px-3 text-sm hover:border-tinta disabled:opacity-40"
             >
-              Encender
+              {buscandoChat ? 'Buscando…' : 'Identificar'}
             </button>
+          </div>
+
+          {pistaChat && <p className="mt-2 text-xs text-aviso">{pistaChat}</p>}
+
+          {chats && chats.length > 0 && (
+            <ul className="mt-2 space-y-1 border border-linea bg-papel p-2">
+              {chats.map((c) => (
+                <li key={c.id} className="flex items-center gap-2 text-sm">
+                  <span className="flex-1 truncate">
+                    {c.nombre} <span className="text-tenue">· {c.tipo}</span>
+                  </span>
+                  <span className="font-mono text-xs text-tenue">{c.id}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAjustes({ ...ajustes, telegramChatId: c.id })
+                      guardarAjustes({ telegramChatId: c.id })
+                      setChats(null)
+                    }}
+                    className="etiqueta hover:text-tinta"
+                  >
+                    Usar este
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {ajustes.telegramChatId && (
+            <button
+              type="button"
+              onClick={async () => {
+                const res = await fetch('/api/notify', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ tipo: 'libre', texto: 'Prueba de avisos del SDR.' }),
+                })
+                setAviso(res.ok ? 'Aviso de prueba enviado.' : null)
+                setError(res.ok ? null : 'No llegó: revisa el número.')
+              }}
+              className="etiqueta mt-2 hover:text-tinta"
+            >
+              Enviar aviso de prueba
+            </button>
+          )}
+        </div>
+
+        {/* Reabastecimiento: que la cola no se quede vacía. */}
+        <div className="border border-linea bg-lienzo p-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="max-w-lg">
+              <h3 className="text-base font-semibold">Buscar leads solo</h3>
+              <p className="mt-0.5 text-sm text-apagado">
+                Cuando una campaña en marcha se queda sin leads, busca más en vez de pararse. No
+                cambia cuántos mensajes salen al día.
+              </p>
+            </div>
+            <Interruptor
+              etiqueta={ajustes.autoProspect ? 'Encendido' : 'Apagado'}
+              activo={ajustes.autoProspect}
+              desactivado={guardando}
+              onCambiar={(v) => guardarAjustes({ autoProspect: v })}
+            />
+          </div>
+
+          {ajustes.autoProspect && (
+            <details className="mt-4 border-t border-linea pt-3">
+              <summary className="etiqueta cursor-pointer hover:text-tinta">Afinar</summary>
+              <div className="mt-3 grid gap-4 sm:grid-cols-3">
+                {(
+                  [
+                    ['autoProspectMinLeads', 'Buscar por debajo de', 'leads pendientes'],
+                    ['autoProspectMaxItems', 'Perfiles por búsqueda', ''],
+                    ['autoProspectMinScore', 'Score para entrar solo', 'de 0 a 100'],
+                  ] as const
+                ).map(([clave, etiqueta, nota]) => (
+                  <label key={clave} className="text-xs">
+                    <span className="etiqueta">{etiqueta}</span>
+                    {nota && <span className="mt-0.5 block text-tenue">{nota}</span>}
+                    <input
+                      type="number"
+                      min={1}
+                      defaultValue={ajustes[clave]}
+                      onBlur={(e) => guardarAjustes({ [clave]: Number(e.target.value) })}
+                      className={`${entrada} mt-1 font-mono`}
+                    />
+                  </label>
+                ))}
+              </div>
+            </details>
           )}
         </div>
       </section>
 
-      {/* Reabastecimiento: que no se pare nunca. */}
-      <section className="border border-linea bg-lienzo p-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="max-w-xl">
-            <h2 className="text-lg font-semibold">
-              Buscar leads solo {ajustes.autoProspect ? '· encendido' : '· apagado'}
-            </h2>
-            <p className="mt-1 text-sm text-apagado">
-              Cuando una campaña en marcha se queda sin leads, el sistema busca más él solo en vez
-              de pararse. Encendido no para hasta que lo apagues.
-            </p>
-            <p className="mt-2 text-xs text-tenue">
-              Esto llena la cola. No cambia cuántos mensajes salen al día: eso lo siguen decidiendo
-              los topes de cada cuenta.
-            </p>
-          </div>
-          <button
-            type="button"
-            disabled={guardando}
-            onClick={() => guardarAjustes({ autoProspect: !ajustes.autoProspect })}
-            className={
-              ajustes.autoProspect
-                ? 'border-2 border-tinta bg-tinta px-4 py-2.5 text-sm font-semibold text-lienzo disabled:opacity-50'
-                : 'border-2 border-linea-fuerte px-4 py-2.5 text-sm font-semibold hover:border-tinta disabled:opacity-50'
-            }
-          >
-            {ajustes.autoProspect ? 'Apagar' : 'Encender'}
-          </button>
-        </div>
+      {/* ------------------------------------------------------------------ */}
+      {/* Lo que se decide una vez para todo, no por empresa.                  */}
+      {/* ------------------------------------------------------------------ */}
+      <section className="space-y-5">
+        <h2 className="etiqueta border-b border-linea pb-2">Todo el sistema</h2>
 
-        {ajustes.autoProspect && (
-          <div className="mt-4 grid gap-4 border-t border-linea pt-4 sm:grid-cols-4">
-            {([
-              ['autoProspectMinLeads', 'Buscar por debajo de', 'leads pendientes'],
-              ['autoProspectMaxSearchesPerDay', 'Búsquedas al día', 'freno de gasto'],
-              ['autoProspectMaxItems', 'Perfiles por búsqueda', ''],
-              ['autoProspectMinScore', 'Score para entrar solo', 'de 0 a 100'],
-            ] as const).map(([clave, etiqueta, nota]) => (
-              <label key={clave} className="text-xs">
-                <span className="etiqueta">{etiqueta}</span>
-                {nota && <span className="mt-0.5 block text-tenue">{nota}</span>}
-                <input
-                  type="number"
-                  min={1}
-                  defaultValue={ajustes[clave]}
-                  onBlur={(e) => guardarAjustes({ [clave]: Number(e.target.value) })}
-                  className={`${entrada} mt-1 font-mono`}
-                />
-              </label>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        <section className="space-y-4 border border-linea bg-lienzo p-4">
-          <h2 className="etiqueta">Modelo</h2>
-
+        <div className="space-y-5 border border-linea bg-lienzo p-5">
           <div>
-            <label htmlFor="modelo" className="etiqueta">Modelo de OpenRouter</label>
+            <label htmlFor="modelo" className="text-base font-semibold">
+              Modelo
+            </label>
             {modelos === null ? (
               <p className="mt-1.5 text-sm text-tenue">Cargando catálogo…</p>
             ) : modelos.length === 0 ? (
@@ -285,10 +321,14 @@ export function Ajustes({
                 className={`${entrada} mt-1.5 font-mono`}
               >
                 {!modelos.some((m) => m.id === ajustes.openrouterModel) && (
-                  <option value={ajustes.openrouterModel}>{ajustes.openrouterModel} (no está en el catálogo)</option>
+                  <option value={ajustes.openrouterModel}>
+                    {ajustes.openrouterModel} (no está en el catálogo)
+                  </option>
                 )}
                 {modelos.map((m) => (
-                  <option key={m.id} value={m.id}>{m.id}</option>
+                  <option key={m.id} value={m.id}>
+                    {m.id}
+                  </option>
                 ))}
               </select>
             )}
@@ -299,203 +339,71 @@ export function Ajustes({
                 {(modeloActual.contextLength / 1000).toFixed(0)}k de contexto
               </p>
             )}
-            <p className="mt-1 text-xs text-tenue">
-              Solo se listan modelos con tools y salidas estructuradas: el agente los necesita.
-            </p>
           </div>
 
-          <div>
-            <label htmlFor="empresa" className="etiqueta">Nombre de tu empresa</label>
-            <p className="mt-0.5 text-xs text-tenue">Sustituye a <code className="font-mono">{'{{empresa}}'}</code> en el playbook.</p>
-            <input
-              id="empresa"
-              value={ajustes.companyName}
-              onChange={(e) => setAjustes({ ...ajustes, companyName: e.target.value })}
-              onBlur={() => guardarAjustes({ companyName: ajustes.companyName })}
-              className={`${entrada} mt-1.5`}
-            />
-          </div>
-
-          <label className="flex items-start gap-2 border-t border-linea pt-4 text-sm">
-            <input
-              type="checkbox"
-              className="mt-1"
-              checked={ajustes.enrichBeforeContact}
-              onChange={(e) => guardarAjustes({ enrichBeforeContact: e.target.checked })}
-            />
-            <span>
-              <span className="font-medium">Leer el perfil y la web antes de escribir</span>
-              <span className="mt-0.5 block text-xs text-tenue">
-                Añade unos 30 s por lead y cuesta unos céntimos, pero es la diferencia entre un
-                mensaje que cita algo suyo y uno que parece una plantilla.
-              </span>
-            </span>
-          </label>
-
-          <div>
-            <label htmlFor="telegram" className="etiqueta">Chat de Telegram para los avisos</label>
-            <p className="mt-0.5 text-xs text-tenue">
-              {tieneTelegramEnv
-                ? 'Hay uno en las variables de entorno. Lo que pongas aquí manda sobre él.'
-                : 'Habla con @userinfobot en Telegram para saber tu chat_id.'}
-            </p>
-            <div className="mt-1.5 flex gap-2">
-              <input
-                id="telegram"
-                value={ajustes.telegramChatId}
-                onChange={(e) => setAjustes({ ...ajustes, telegramChatId: e.target.value })}
-                onBlur={() => guardarAjustes({ telegramChatId: ajustes.telegramChatId })}
-                className={`${entrada} font-mono`}
-              />
-              <button
-                type="button"
-                onClick={identificarChat}
-                disabled={buscandoChat}
-                className="shrink-0 border border-linea-fuerte px-3 text-sm hover:border-tinta disabled:opacity-40"
-              >
-                {buscandoChat ? 'Buscando…' : 'Identificar'}
-              </button>
+          <div className="flex flex-wrap items-start justify-between gap-4 border-t border-linea pt-5">
+            <div className="max-w-lg">
+              <h3 className="text-base font-semibold">Leer el perfil antes de escribir</h3>
+              <p className="mt-0.5 text-sm text-apagado">
+                Unos 30 s y unos céntimos por lead. Es la diferencia entre citar algo suyo y
+                parecer una plantilla.
+              </p>
             </div>
-
-            {pistaChat && <p className="mt-2 text-xs text-aviso">{pistaChat}</p>}
-
-            {chats && chats.length > 0 && (
-              <ul className="mt-2 space-y-1 border border-linea bg-papel p-2">
-                {chats.map((c) => (
-                  <li key={c.id} className="flex items-center gap-2 text-sm">
-                    <span className="flex-1 truncate">
-                      {c.nombre} <span className="text-tenue">· {c.tipo}</span>
-                    </span>
-                    <span className="font-mono text-xs text-tenue">{c.id}</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAjustes({ ...ajustes, telegramChatId: String(c.id) })
-                        guardarAjustes({ telegramChatId: String(c.id) })
-                        setChats(null)
-                      }}
-                      className="etiqueta hover:text-tinta"
-                    >
-                      Usar este
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            {ajustes.telegramChatId && (
-              <button
-                type="button"
-                onClick={async () => {
-                  const res = await fetch('/api/notify', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ tipo: 'libre', texto: 'Prueba de avisos del SDR.' }),
-                  })
-                  setAviso(res.ok ? 'Aviso de prueba enviado.' : 'No llegó: revisa el chat id.')
-                }}
-                className="etiqueta mt-2 hover:text-tinta"
-              >
-                Enviar aviso de prueba
-              </button>
-            )}
-          </div>
-        </section>
-
-        <section className="border border-linea bg-lienzo p-4">
-          <h2 className="etiqueta">Cuentas</h2>
-          <p className="mt-0.5 text-xs text-tenue">
-            Conecta desde aquí. Tus credenciales se meten en la pantalla de Unipile: este
-            dashboard no las ve ni las guarda.
-          </p>
-
-          <div className="mt-3 flex flex-wrap gap-2">
-            {([
-              ['LINKEDIN', 'LinkedIn'],
-              ['INSTAGRAM', 'Instagram'],
-              ['GOOGLE', 'Gmail'],
-            ] as const).map(([id, etiqueta]) => (
-              <button
-                key={id}
-                type="button"
-                disabled={conectando !== null}
-                onClick={() => conectar(id)}
-                className="border border-linea-fuerte px-3 py-2 text-sm hover:border-tinta disabled:opacity-40"
-              >
-                {conectando === id ? 'Abriendo…' : `Conectar ${etiqueta}`}
-              </button>
-            ))}
-            <button
-              type="button"
-              disabled={sincronizando}
-              onClick={sincronizar}
-              className="ml-auto border border-linea-fuerte px-3 py-2 text-sm hover:border-tinta disabled:opacity-40"
-            >
-              {sincronizando ? 'Sincronizando…' : 'Sincronizar'}
-            </button>
+            <Interruptor
+              etiqueta={ajustes.enrichBeforeContact ? 'Sí' : 'No'}
+              activo={ajustes.enrichBeforeContact}
+              desactivado={guardando}
+              onCambiar={(v) => guardarAjustes({ enrichBeforeContact: v })}
+            />
           </div>
 
-          <p className="mt-2 text-xs text-tenue">
-            Las cuentas nuevas entran <strong>en pausa</strong>. Conectar y empezar a escribir en
-            el mismo gesto es justo lo que no queremos.
+          <div className="border-t border-linea pt-5">
+            <label htmlFor="tope" className="text-base font-semibold">
+              Tope de búsquedas al día
+            </label>
+            <p className="mt-0.5 text-sm text-apagado">
+              Freno de gasto de todo el sistema. Vale para todas las empresas juntas: si fuese de
+              cada una, cinco empresas multiplicarían la factura por cinco.
+            </p>
+            <input
+              id="tope"
+              type="number"
+              min={1}
+              max={50}
+              defaultValue={ajustes.autoProspectMaxSearchesPerDay}
+              onBlur={(e) =>
+                guardarAjustes({ autoProspectMaxSearchesPerDay: Number(e.target.value) })
+              }
+              className={`${entrada} mt-2 w-24 font-mono`}
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* ------------------------------------------------------------------ */}
+      <section className="flex flex-wrap items-center justify-between gap-4 border-2 border-vivo bg-lienzo p-5">
+        <div className="max-w-lg">
+          <h2 className="text-lg font-semibold text-vivo">Parada de emergencia</h2>
+          <p className="mt-0.5 text-sm text-apagado">
+            Pausa todas las campañas y apaga el autopiloto de todas las empresas. Es de ida
+            solamente: reanudar se hace campaña a campaña, a mano.
           </p>
+        </div>
+        <ParadaDeEmergencia campanasActivas={campanasActivas} />
+      </section>
 
-          <ul className="mt-3 space-y-4">
-            {cuentas.length === 0 && (
-              <li className="text-sm text-tenue">Ninguna cuenta conectada todavía.</li>
-            )}
-            {cuentas.map((c) => (
-              <li key={c.id} className="space-y-2 border-t border-linea pt-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium">{c.displayName}</span>
-                  <span className="font-mono text-[11px] text-tenue uppercase">{c.provider}</span>
-                  <select
-                    value={c.status}
-                    onChange={(e) => guardarCuenta(c.id, { status: e.target.value as Cuenta['status'] })}
-                    aria-label={`Estado de ${c.displayName}`}
-                    className={`ml-auto border border-linea-fuerte bg-papel px-2 py-1 text-xs ${
-                      c.status === 'active' ? 'text-ok' : 'text-apagado'
-                    }`}
-                  >
-                    <option value="active">activa</option>
-                    <option value="paused">en pausa</option>
-                    <option value="disconnected">desconectada</option>
-                  </select>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <label className="text-xs">
-                    <span className="etiqueta">Tope diario</span>
-                    <input
-                      type="number" min={1} max={80} defaultValue={c.dailyLimit}
-                      onBlur={(e) => guardarCuenta(c.id, { dailyLimit: Number(e.target.value) })}
-                      className={`${entrada} mt-1 font-mono`}
-                    />
-                  </label>
-                  <label className="text-xs">
-                    <span className="etiqueta">Tope por hora</span>
-                    <input
-                      type="number" min={1} max={20} defaultValue={c.hourlyLimit ?? ''}
-                      placeholder="sin tope"
-                      onBlur={(e) =>
-                        guardarCuenta(c.id, { hourlyLimit: e.target.value ? Number(e.target.value) : null })
-                      }
-                      className={`${entrada} mt-1 font-mono`}
-                    />
-                  </label>
-                </div>
-
-                {c.provider === 'instagram' && c.hourlyLimit === null && (
-                  <p className="text-xs text-aviso">
-                    Instagram admite 100 acciones al día pero no más de 10 por hora. Sin tope horario
-                    te arriesgas a un bloqueo.
-                  </p>
-                )}
-              </li>
-            ))}
-          </ul>
-        </section>
-      </div>
+      <section>
+        <h2 className="etiqueta border-b border-linea pb-2">Si quieres bajar al detalle</h2>
+        <ul className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2">
+          {DETALLE.map(({ href, etiqueta, nota }) => (
+            <li key={href}>
+              <Link href={href} className="text-sm text-apagado hover:text-tinta">
+                {etiqueta} <span className="text-tenue">· {nota}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </section>
     </div>
   )
 }

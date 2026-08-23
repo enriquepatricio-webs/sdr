@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { MAX_DAILY_LIMIT, campaigns } from '@/lib/db/schema'
 import { jsonError, parseBody, serverError } from '@/lib/api'
+import { traducir } from '../route'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,7 +14,7 @@ const cuerpo = z.object({
   accountId: z.string().uuid().nullable(),
   playbookId: z.string().uuid().nullable(),
   icpId: z.string().uuid().nullable(),
-  sellerId: z.string().uuid().nullable().optional(),
+  workspaceId: z.string().uuid().nullable().optional(),
   dailyCap: z.number().int().min(1).max(MAX_DAILY_LIMIT),
   maxTouches: z.number().int().min(1).max(10),
   followupDelays: z.array(z.number().int().min(1).max(90)).min(1),
@@ -40,15 +41,10 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     if (!actualizada) return jsonError('Esa campaña no existe.', 404)
     return NextResponse.json(actualizada)
   } catch (err) {
-    // El error típico aquí es la clave ajena compuesta: canal que no cuadra con
-    // el proveedor de la cuenta. Se traduce a algo accionable.
-    const msg = err instanceof Error ? err.message : ''
-    if (msg.includes('campaigns_account_channel_fk')) {
-      return jsonError(
-        `Esa cuenta no es de ${d.channel}. Elige una cuenta del mismo canal.`,
-        409,
-      )
-    }
+    // Los errores típicos aquí son las claves ajenas compuestas: canal que no
+    // cuadra con el proveedor de la cuenta, o cuenta de otra empresa.
+    const traducido = traducir(err, d.channel)
+    if (traducido !== 'No se pudo crear la campaña') return jsonError(traducido, 409)
     return serverError(err, 'No se pudo guardar la campaña')
   }
 }

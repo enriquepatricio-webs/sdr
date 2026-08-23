@@ -5,13 +5,11 @@ import { db } from '@/lib/db'
 import { accounts, campaigns, leads, runLogs, touches } from '@/lib/db/schema'
 import { jsonError, parseBody, serverError } from '@/lib/api'
 import { UnipileError, enviarEnChat, iniciarChat, invitar } from '@/lib/unipile'
-import { getSettings } from '@/lib/settings'
+import { ajustesEfectivos } from '@/lib/workspace'
+import { AVISO_SIN_PRECIOS, mencionaDinero } from '@/lib/sin-precios'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
-
-/** Símbolos, códigos y palabras de moneda. Se prefiere bloquear de más. */
-const MENCIONA_DINERO = /(€|\$|£|\bEUR\b|\bUSD\b|\bGBP\b|\beuros?\b|\bd[oó]lares?\b|\blibras?\b)/i
 
 const cuerpo = z.object({
   leadId: z.string().uuid(),
@@ -50,20 +48,9 @@ export async function POST(request: Request) {
   if (!body.ok) return body.response
   const d = body.data
 
-  /**
-   * Ningún mensaje sale con una cifra de dinero dentro.
-   *
-   * No basta con pedírselo al prompt, por dos motivos. Uno: una instrucción es
-   * una petición, no una condición. Y dos, el que no se ve: el contexto de la
-   * empresa sale de scrapear su propia web, y las webs llevan tarifas — así que
-   * los precios vuelven a entrar en el prompt por detrás después de haberlos
-   * quitado del playbook.
-   *
-   * Este fichero es la única puerta por la que sale texto hacia una persona, así
-   * que es el único sitio donde el control cubre a la vez a los tres workflows
-   * y a la intervención manual.
-   */
-  if (MENCIONA_DINERO.test(d.texto)) {
+  // El filtro y su porqué viven en lib/sin-precios.ts: hay dos puertas de
+  // salida hacia una persona y no pueden endurecerse por separado.
+  if (mencionaDinero(d.texto)) {
     await db.insert(runLogs).values({
       workflow: 'sdr-envio',
       level: 'warn',
@@ -72,10 +59,7 @@ export async function POST(request: Request) {
       // la clave ajena convertiría el bloqueo en un 500.
       payload: { leadId: d.leadId, texto: d.texto },
     })
-    return jsonError(
-      'Ese mensaje menciona dinero y no puede salir. Reescríbelo sin cifras ni monedas: explica por qué el número se da en la reunión y cierra pidiendo el día.',
-      422,
-    )
+    return jsonError(AVISO_SIN_PRECIOS, 422)
   }
 
   try {
@@ -97,7 +81,10 @@ export async function POST(request: Request) {
       return jsonError(`La cuenta está en "${cuenta.status}".`, 409)
     }
 
-    const ajustes = await getSettings()
+    // El autopiloto es el de LA EMPRESA de esta campaña, no uno global. Con
+    // varias empresas conectadas, una puede estar enviando mientras otra sigue
+    // en borradores, que es justo lo que se pidió.
+    const ajustes = await ajustesEfectivos(campana.workspaceId)
 
     // ---- 1. Registrar ANTES de enviar --------------------------------------
     const [toque] = await db
@@ -120,7 +107,7 @@ export async function POST(request: Request) {
         workflow: 'sdr-envio',
         leadId: lead.id,
         level: 'info',
-        message: 'Borrador guardado. El autopiloto está apagado, no se ha enviado nada.',
+        message: `Borrador guardado. El autopiloto de ${ajustes.companyName} está apagado, no se ha enviado nada.`,
       })
       return NextResponse.json({ enviado: false, motivo: 'autopiloto_apagado', touchId: toque.id })
     }

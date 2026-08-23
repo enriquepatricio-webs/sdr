@@ -2,192 +2,484 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
+import { elegirEmpresa } from '@/lib/empresa'
 
 type Empresa = {
   id: string
   name: string
   website: string | null
   context: string | null
-  scrapedContext: string | null
-  scrapedAt: string | null
   offer: string | null
-  createdAt: string
+  scrapedAt: string | null
+  caracteresLeidos: number
 }
 
-const entrada = 'w-full border border-linea-fuerte bg-papel px-3 py-2 text-sm outline-none focus:border-ensayo'
+type Cuenta = {
+  id: string
+  provider: 'linkedin' | 'email' | 'instagram'
+  displayName: string
+  status: 'active' | 'paused' | 'disconnected'
+  /** null = sin tope por hora. En Instagram eso es arriesgarse a un bloqueo. */
+  hourlyLimit: number | null
+  /** Sin empresa asignada: ninguna campaña puede usarla hasta que se le ponga. */
+  huerfana: boolean
+}
 
-export function EditorEmpresas({ inicial }: { inicial: Empresa[] }) {
+const entrada =
+  'w-full border border-linea-fuerte bg-papel px-3 py-2 text-sm outline-none focus:border-ensayo'
+
+const CANALES = [
+  { id: 'LINKEDIN', etiqueta: 'LinkedIn', proveedor: 'linkedin' },
+  { id: 'INSTAGRAM', etiqueta: 'Instagram', proveedor: 'instagram' },
+  { id: 'GOOGLE', etiqueta: 'Gmail', proveedor: 'email' },
+] as const
+
+const ESTADO: Record<Cuenta['status'], string> = {
+  active: 'activa',
+  paused: 'en pausa',
+  disconnected: 'desconectada',
+}
+
+/**
+ * Tres preguntas. Ni una más.
+ *
+ * Todo lo demás que el agente necesita para vender —cómo abre, cuántas veces
+ * insiste, qué pregunta, cuándo agenda— viene de fábrica en el playbook global
+ * y no se pregunta aquí. Lo único que cambia de una empresa a otra es a qué se
+ * dedica, qué dice su web y qué ofrece.
+ *
+ * Es la misma pantalla para dar de alta y para editar: dar de alta es rellenar
+ * esto por primera vez.
+ */
+export function EditorEmpresa({
+  empresa,
+  empresaId,
+  cuentas,
+}: {
+  empresa: Empresa | null
+  /** Se pasa aparte porque hace falta aunque el formulario aún no tenga datos. */
+  empresaId: string | null
+  cuentas: Cuenta[]
+}) {
   const router = useRouter()
-  const [lista, setLista] = useState(inicial)
-  const [activa, setActiva] = useState(inicial[0]?.id ?? null)
+  const [datos, setDatos] = useState(empresa)
   const [guardando, guardar] = useTransition()
   const [leyendo, setLeyendo] = useState(false)
   const [aviso, setAviso] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-
-  const e = lista.find((x) => x.id === activa)
+  const [creando, setCreando] = useState(false)
+  const [nombreNuevo, setNombreNuevo] = useState('')
+  const [conectando, setConectando] = useState<string | null>(null)
+  const [sincronizando, setSincronizando] = useState(false)
 
   function actualizar(cambios: Partial<Empresa>) {
-    setLista(lista.map((x) => (x.id === activa ? { ...x, ...cambios } : x)))
+    if (datos) setDatos({ ...datos, ...cambios })
+  }
+
+  async function persistir(): Promise<boolean> {
+    if (!datos) return false
+    const res = await fetch(`/api/workspaces/${datos.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: datos.name,
+        website: datos.website,
+        context: datos.context,
+        offer: datos.offer,
+      }),
+    })
+    if (res.ok) return true
+    setError((await res.json()).error ?? 'No se pudo guardar.')
+    return false
   }
 
   function guardarEmpresa() {
-    if (!e) return
     guardar(async () => {
-      setAviso(null); setError(null)
-      const res = await fetch(`/api/sellers/${e.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: e.name, website: e.website, context: e.context, offer: e.offer }),
-      })
-      if (res.ok) { setAviso('Guardado.'); router.refresh() }
-      else setError((await res.json()).error ?? 'No se pudo guardar.')
+      setAviso(null)
+      setError(null)
+      if (await persistir()) {
+        setAviso('Guardado.')
+        router.refresh()
+      }
     })
   }
 
   async function leerWeb() {
-    if (!e) return
-    setLeyendo(true); setAviso(null); setError(null)
+    if (!datos) return
+    setLeyendo(true)
+    setAviso(null)
+    setError(null)
     try {
-      const res = await fetch(`/api/sellers/${e.id}/scrape`, { method: 'POST' })
+      // Se guarda antes de leer. Si acabas de escribir la web y no has pulsado
+      // Guardar, el servidor iría a la URL vieja y no habría forma de notarlo.
+      if (!(await persistir())) return
+      const res = await fetch(`/api/workspaces/${datos.id}/scrape`, { method: 'POST' })
       const json = await res.json()
       if (res.ok) {
-        setAviso(`Leídos ${json.caracteres.toLocaleString('es-ES')} caracteres de la web.`)
+        actualizar({ scrapedAt: json.scrapedAt, caracteresLeidos: json.caracteres })
+        setAviso(`Leídos ${json.caracteres.toLocaleString('es-ES')} caracteres.`)
         router.refresh()
       } else setError(json.error ?? 'No se pudo leer la web.')
-    } finally { setLeyendo(false) }
-  }
-
-  async function crear() {
-    const res = await fetch('/api/sellers', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: `Empresa ${lista.length + 1}` }),
-    })
-    if (res.ok) {
-      const nueva = await res.json()
-      setLista([...lista, nueva])
-      setActiva(nueva.id)
+    } finally {
+      setLeyendo(false)
     }
   }
 
+  async function crear() {
+    setError(null)
+    const res = await fetch('/api/workspaces', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: nombreNuevo.trim() }),
+    })
+    if (!res.ok) {
+      setError((await res.json()).error ?? 'No se pudo crear.')
+      return
+    }
+    // Se pasa a la empresa recién creada: crearla y quedarse en la anterior
+    // hace que parezca que no ha pasado nada.
+    elegirEmpresa((await res.json()).id)
+    setCreando(false)
+    setNombreNuevo('')
+    router.refresh()
+  }
+
+  async function conectar(proveedor: string) {
+    setConectando(proveedor)
+    setError(null)
+    try {
+      const res = await fetch('/api/accounts/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proveedor }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        setError(json.error ?? 'No se pudo generar el enlace.')
+        return
+      }
+      // En la misma pestaña, no en una nueva: el await rompe la cadena del
+      // gesto del usuario y Safari bloquea la ventana emergente.
+      window.location.href = json.url
+    } finally {
+      setConectando(null)
+    }
+  }
+
+  async function sincronizar() {
+    setSincronizando(true)
+    setAviso(null)
+    setError(null)
+    try {
+      // Con el id de la empresa: una cuenta que entra sin dueño no la puede
+      // usar ninguna campaña, y el fallo no aparece hasta mucho después.
+      const res = await fetch(
+        empresaId ? `/api/accounts/sync?workspaceId=${empresaId}` : '/api/accounts/sync',
+        { method: 'POST' },
+      )
+      const json = await res.json()
+      if (!res.ok) {
+        setError(json.error ?? 'No se pudo sincronizar.')
+        return
+      }
+      setAviso(
+        json.nuevas?.length
+          ? `${json.nuevas.length} cuenta(s) nueva(s). Entran en pausa.`
+          : `Sin cambios (${json.encontradas} cuentas vistas).`,
+      )
+      router.refresh()
+    } finally {
+      setSincronizando(false)
+    }
+  }
+
+  function cambiarCuenta(id: string, cambios: Partial<Cuenta> & { workspaceId?: string }) {
+    guardar(async () => {
+      const res = await fetch(`/api/accounts/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cambios),
+      })
+      if (res.ok) router.refresh()
+      else setError((await res.json()).error ?? 'No se pudo cambiar la cuenta.')
+    })
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-3xl space-y-8">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="etiqueta">Para quién vendes</p>
-          <h1 className="mt-1 text-3xl font-semibold tracking-tight">Empresas</h1>
-          <p className="mt-1 max-w-2xl text-sm text-apagado">
-            El playbook es el <em>método</em> de venta; esto es el <em>contexto</em>. El mismo
-            método sirve para varios clientes: lo que cambia es qué vende cada uno. Cada campaña
-            apunta a una empresa de aquí.
+          <p className="etiqueta">Tu empresa</p>
+          <h1 className="mt-1 text-3xl font-semibold tracking-tight">
+            {datos ? datos.name : 'Empieza por aquí'}
+          </h1>
+          <p className="mt-1 max-w-xl text-sm text-apagado">
+            Con esto el agente ya sabe para quién habla. Cómo vende no se pregunta: viene puesto.
           </p>
         </div>
-        <button type="button" onClick={crear} className="border border-linea-fuerte px-3 py-2 text-sm hover:border-tinta">
-          Nueva empresa
-        </button>
+        {!creando && (
+          <button
+            type="button"
+            onClick={() => setCreando(true)}
+            className="border border-linea-fuerte px-3 py-2 text-sm hover:border-tinta"
+          >
+            Añadir otra empresa
+          </button>
+        )}
       </header>
 
-      {lista.length > 1 && (
-        <div className="flex flex-wrap gap-2">
-          {lista.map((x) => (
+      {creando && (
+        <div className="border border-linea bg-lienzo p-4">
+          <label htmlFor="nueva" className="etiqueta">
+            Nombre de la empresa nueva
+          </label>
+          <div className="mt-1.5 flex gap-2">
+            <input
+              id="nueva"
+              autoFocus
+              value={nombreNuevo}
+              onChange={(e) => setNombreNuevo(e.target.value)}
+              className={entrada}
+            />
             <button
-              key={x.id}
               type="button"
-              onClick={() => { setActiva(x.id); setAviso(null); setError(null) }}
-              className={`border px-3 py-1.5 text-sm ${
-                activa === x.id ? 'border-tinta bg-tinta text-lienzo' : 'border-linea-fuerte text-apagado hover:border-tinta'
-              }`}
+              disabled={!nombreNuevo.trim()}
+              onClick={crear}
+              className="shrink-0 bg-tinta px-4 text-sm font-semibold text-lienzo disabled:opacity-40"
             >
-              {x.name}
+              Crear
             </button>
-          ))}
+            <button
+              type="button"
+              onClick={() => setCreando(false)}
+              className="shrink-0 px-3 text-sm text-apagado hover:text-tinta"
+            >
+              Cancelar
+            </button>
+          </div>
         </div>
       )}
 
-      {!e ? (
+      {!datos ? (
         <div className="border border-dashed border-linea-fuerte p-10 text-center">
           <p className="text-sm text-tenue">
-            No hay ninguna empresa. Crea una y el agente sabrá para quién habla.
+            Todavía no hay ninguna empresa. Crea una y el agente sabrá para quién habla.
           </p>
         </div>
       ) : (
-        <div className="space-y-5 border border-linea bg-lienzo p-5">
-          <div className="grid gap-4 sm:grid-cols-2">
+        <>
+          <div className="space-y-6 border border-linea bg-lienzo p-5">
             <div>
-              <label htmlFor="nombre" className="etiqueta">Nombre</label>
-              <p className="mt-0.5 text-xs text-tenue">Sustituye a <code className="font-mono">{'{{empresa}}'}</code> en el playbook.</p>
-              <input id="nombre" value={e.name} onChange={(ev) => actualizar({ name: ev.target.value })} className={`${entrada} mt-1.5`} />
-            </div>
-            <div>
-              <label htmlFor="web" className="etiqueta">Web</label>
-              <p className="mt-0.5 text-xs text-tenue">De aquí se saca el contexto automáticamente.</p>
+              <label htmlFor="nombre" className="etiqueta">
+                Nombre
+              </label>
               <input
-                id="web" value={e.website ?? ''} placeholder="https://thecotocompany.com"
-                onChange={(ev) => actualizar({ website: ev.target.value })}
+                id="nombre"
+                value={datos.name}
+                onChange={(e) => actualizar({ name: e.target.value })}
                 className={`${entrada} mt-1.5`}
               />
             </div>
-          </div>
 
-          <div>
-            <label htmlFor="ctx" className="etiqueta">Contexto que escribes tú</label>
-            <p className="mt-0.5 text-xs text-tenue">
-              Lo que el agente debe saber y no está en la web: matices, lo que NO decir, casos de
-              éxito concretos. Si esto contradice a la web, manda esto.
-            </p>
-            <textarea
-              id="ctx" rows={7} value={e.context ?? ''}
-              onChange={(ev) => actualizar({ context: ev.target.value })}
-              className={`${entrada} mt-1.5 resize-y`}
-            />
-          </div>
+            {/* 1 de 3 */}
+            <div>
+              <label htmlFor="ctx" className="text-base font-semibold">
+                ¿A qué os dedicáis y a quién vendéis?
+              </label>
+              <p className="mt-0.5 text-sm text-tenue">
+                En cuatro líneas. Añade lo que el agente NO debe decir nunca: eso es lo que más
+                caro sale.
+              </p>
+              <textarea
+                id="ctx"
+                rows={6}
+                value={datos.context ?? ''}
+                onChange={(e) => actualizar({ context: e.target.value })}
+                className={`${entrada} mt-2 resize-y`}
+              />
+            </div>
 
-          <div>
-            <label htmlFor="oferta" className="etiqueta">Oferta (opcional)</label>
-            <p className="mt-0.5 text-xs text-tenue">Si la rellenas, sustituye a la del playbook para esta empresa.</p>
-            <textarea
-              id="oferta" rows={4} value={e.offer ?? ''}
-              onChange={(ev) => actualizar({ offer: ev.target.value })}
-              className={`${entrada} mt-1.5 resize-y`}
-            />
-          </div>
+            {/* 2 de 3 */}
+            <div className="border-t border-linea pt-5">
+              <label htmlFor="web" className="text-base font-semibold">
+                ¿Cuál es vuestra web?
+              </label>
+              <p className="mt-0.5 text-sm text-tenue">
+                El agente la lee entera y se queda con lo que dice. Si la web se contradice con lo
+                de arriba, manda lo de arriba.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <input
+                  id="web"
+                  value={datos.website ?? ''}
+                  placeholder="https://…"
+                  onChange={(e) => actualizar({ website: e.target.value })}
+                  className={`${entrada} flex-1`}
+                />
+                <button
+                  type="button"
+                  onClick={leerWeb}
+                  disabled={leyendo || !datos.website}
+                  className="shrink-0 border border-linea-fuerte px-4 py-2 text-sm hover:border-tinta disabled:opacity-40"
+                >
+                  {leyendo ? 'Leyendo…' : 'Leer la web'}
+                </button>
+              </div>
+              <p className="mt-1.5 text-xs text-tenue">
+                {leyendo
+                  ? 'Tarda entre 20 y 60 segundos.'
+                  : datos.scrapedAt
+                    ? `Leída el ${new Date(datos.scrapedAt).toLocaleDateString('es-ES')} · ${datos.caracteresLeidos.toLocaleString('es-ES')} caracteres guardados.`
+                    : 'Sin leer todavía. Guarda la web y pulsa "Leer la web".'}
+              </p>
+            </div>
 
-          <div className="border-t border-linea pt-4">
-            <div className="flex flex-wrap items-center gap-3">
+            {/* 3 de 3 */}
+            <div className="border-t border-linea pt-5">
+              <label htmlFor="oferta" className="text-base font-semibold">
+                ¿Hay oferta, garantía o precios?
+              </label>
+              <p className="mt-0.5 text-sm text-tenue">
+                Lo que ofrecéis y en qué condiciones. Si no hay nada de esto, déjalo vacío.
+              </p>
+              <textarea
+                id="oferta"
+                rows={5}
+                value={datos.offer ?? ''}
+                onChange={(e) => actualizar({ offer: e.target.value })}
+                className={`${entrada} mt-2 resize-y`}
+              />
+              <p className="mt-1.5 border-l-2 border-linea-fuerte pl-2 text-xs text-apagado">
+                Los precios le sirven al agente para razonar, pero <strong>no dice cifras de
+                dinero por mensaje, nunca</strong>. El dinero se habla en la reunión.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 border-t border-linea pt-5">
               <button
-                type="button" onClick={guardarEmpresa} disabled={guardando}
-                className="bg-tinta px-4 py-2.5 text-sm font-semibold text-lienzo disabled:opacity-40"
+                type="button"
+                onClick={guardarEmpresa}
+                disabled={guardando}
+                className="bg-tinta px-5 py-2.5 text-sm font-semibold text-lienzo disabled:opacity-40"
               >
                 {guardando ? 'Guardando…' : 'Guardar'}
-              </button>
-              <button
-                type="button" onClick={leerWeb} disabled={leyendo || !e.website}
-                className="border border-linea-fuerte px-4 py-2.5 text-sm hover:border-tinta disabled:opacity-40"
-              >
-                {leyendo ? 'Leyendo la web…' : 'Leer mi web'}
               </button>
               {aviso && <p className="text-sm text-ok">{aviso}</p>}
               {error && <p className="text-sm text-vivo">{error}</p>}
             </div>
-            {leyendo && (
-              <p className="mt-2 text-xs text-tenue">Tarda entre 20 y 60 segundos.</p>
-            )}
           </div>
 
-          {e.scrapedContext && (
-            <details className="border-t border-linea pt-4">
-              <summary className="etiqueta cursor-pointer hover:text-tinta">
-                Lo que se leyó de la web
-                {e.scrapedAt && ` · ${new Date(e.scrapedAt).toLocaleDateString('es-ES')}`}
-                {` · ${e.scrapedContext.length.toLocaleString('es-ES')} caracteres`}
-              </summary>
-              <pre className="mt-2 max-h-72 overflow-auto border border-linea bg-papel p-3 font-mono text-[11px] whitespace-pre-wrap text-apagado">
-                {e.scrapedContext}
-              </pre>
-            </details>
-          )}
-        </div>
+          <section className="border border-linea bg-lienzo p-5">
+            <h2 className="text-base font-semibold">Cuentas desde las que escribe</h2>
+            <p className="mt-0.5 text-sm text-tenue">
+              Tus credenciales se meten en la pantalla de Unipile: aquí no se ven ni se guardan.
+              Una cuenta recién conectada entra <strong>en pausa</strong>.
+            </p>
+
+            <ul className="mt-4">
+              {CANALES.map(({ id, etiqueta, proveedor }) => {
+                // Todas, no la primera: con dos LinkedIn conectados, quedarse
+                // con uno esconde una cuenta que sí está escribiendo.
+                const suyas = cuentas.filter((c) => c.provider === proveedor)
+                return (
+                  <li
+                    key={id}
+                    className="flex flex-wrap items-center gap-3 border-t border-linea py-2.5"
+                  >
+                    <span className="w-24 shrink-0 text-sm font-medium">{etiqueta}</span>
+                    {suyas.length === 0 ? (
+                      <>
+                        <span className="flex-1 text-sm text-tenue">Sin conectar</span>
+                        <button
+                          type="button"
+                          disabled={conectando !== null}
+                          onClick={() => conectar(id)}
+                          className="border border-linea-fuerte px-3 py-1.5 text-sm hover:border-tinta disabled:opacity-40"
+                        >
+                          {conectando === id ? 'Abriendo…' : 'Conectar'}
+                        </button>
+                      </>
+                    ) : (
+                      <ul className="flex-1 space-y-1.5">
+                        {suyas.map((cuenta) => (
+                          <li key={cuenta.id} className="flex items-center gap-3">
+                            <span className="flex-1 truncate text-sm text-apagado">
+                              {cuenta.displayName}
+                            </span>
+                            <select
+                              value={cuenta.status}
+                              onChange={(e) =>
+                                cambiarCuenta(cuenta.id, {
+                                  status: e.target.value as Cuenta['status'],
+                                })
+                              }
+                              aria-label={`Estado de ${cuenta.displayName}`}
+                              className={`border border-linea-fuerte bg-papel px-2 py-1 text-xs ${
+                                cuenta.status === 'active' ? 'text-ok' : 'text-apagado'
+                              }`}
+                            >
+                              {(Object.keys(ESTADO) as Cuenta['status'][]).map((s) => (
+                                <option key={s} value={s}>
+                                  {ESTADO[s]}
+                                </option>
+                              ))}
+                            </select>
+                          </li>
+                        ))}
+                        {suyas.some((c) => c.huerfana) && empresaId && (
+                          <li className="text-xs text-aviso">
+                            Sin empresa asignada, así que ninguna campaña puede usarla.{' '}
+                            <button
+                              type="button"
+                              disabled={guardando}
+                              onClick={() =>
+                                suyas
+                                  .filter((c) => c.huerfana)
+                                  .forEach((c) => cambiarCuenta(c.id, { workspaceId: empresaId }))
+                              }
+                              className="underline hover:text-tinta disabled:opacity-40"
+                            >
+                              Asignarla a esta empresa
+                            </button>
+                          </li>
+                        )}
+                        {/* Instagram admite 100 acciones al día pero no más de
+                            10 por hora. Sin tope horario, el bloqueo es cuestión
+                            de tiempo, y aquí ya no hay campo donde ponerlo. */}
+                        {suyas.some((c) => c.provider === 'instagram' && c.hourlyLimit === null) && (
+                          <li className="text-xs text-aviso">
+                            Sin tope por hora. Instagram bloquea por encima de 10 acciones/hora.{' '}
+                            <button
+                              type="button"
+                              disabled={guardando}
+                              onClick={() =>
+                                suyas
+                                  .filter((c) => c.hourlyLimit === null)
+                                  .forEach((c) => cambiarCuenta(c.id, { hourlyLimit: 8 }))
+                              }
+                              className="underline hover:text-tinta disabled:opacity-40"
+                            >
+                              Poner 8 por hora
+                            </button>
+                          </li>
+                        )}
+                      </ul>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+
+            <button
+              type="button"
+              disabled={sincronizando}
+              onClick={sincronizar}
+              className="etiqueta mt-3 hover:text-tinta disabled:opacity-40"
+            >
+              {sincronizando ? 'Sincronizando…' : 'Sincronizar con Unipile'}
+            </button>
+          </section>
+        </>
       )}
     </div>
   )
