@@ -26,8 +26,8 @@ export async function POST(request: Request) {
   try {
     const { url } = await crearEnlaceDeConexion({
       proveedores: [body.data.proveedor],
-      urlExito: `${base}/settings?conectada=1`,
-      urlFallo: `${base}/settings?conectada=0`,
+      urlExito: `${base}/conectado?ok=1`,
+      urlFallo: `${base}/conectado?ok=0`,
       referencia: 'sdr-dashboard',
     })
     return NextResponse.json({ url })

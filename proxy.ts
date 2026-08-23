@@ -14,7 +14,15 @@ import { SESSION_COOKIE, isValidApiKey, isValidSession } from '@/lib/auth'
  * pueda dejarla abierta por olvido: lo que no está en PUBLIC_PATHS, está cerrado.
  */
 
-const PUBLIC_PATHS = ['/login', '/api/auth/login', '/api/auth/logout']
+const PUBLIC_PATHS = [
+  '/login',
+  '/api/auth/login',
+  '/api/auth/logout',
+  // Aterrizaje del asistente de Unipile: llega desde otro dominio y la cookie
+  // puede no viajar en ese salto. Si esto estuviera protegido, el usuario
+  // acabaría en el login creyendo que se le ha cerrado la sesión.
+  '/conectado',
+]
 
 function isPublic(pathname: string): boolean {
   return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))
