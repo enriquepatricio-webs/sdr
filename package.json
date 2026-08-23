@@ -1,0 +1,46 @@
+{
+  "name": "sdr",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+    "db:seed": "tsx lib/db/seed.cli.ts",
+    "db:verify": "tsx lib/db/schema.test.ts",
+    "test:ventana": "tsx lib/sending-window.test.ts",
+    "verify": "npm run db:verify && npm run test:ventana && npm run test:csv && npm run test:cupo && npm run test:reabastecer && npm run test:integraciones && npm run test:n8n",
+    "test:csv": "tsx lib/csv.test.ts",
+    "test:integraciones": "tsx lib/integraciones.test.mts",
+    "test:cupo": "tsx lib/quota.test.ts",
+    "test:reabastecer": "tsx lib/replenish.test.ts",
+    "test:n8n": "tsx n8n/workflows.test.mts"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
+    "drizzle-orm": "^0.45.2",
+    "next": "16.3.2",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.6",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "dotenv": "^17.4.2",
+    "drizzle-kit": "^0.31.10",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.2",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.12",
+    "typescript": "^5"
+  }
+}

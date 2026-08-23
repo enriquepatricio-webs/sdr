@@ -1,0 +1,389 @@
+{
+  "name": "sdr-outbound",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "cron-30",
+      "name": "Cada 30 minutos",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        260,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://sdr.thecotocompany.com/api/prospect/replenish",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "reabastecer-si-hace-falta",
+      "name": "Reabastecer si hace falta",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REEMPLAZAR",
+          "name": "SDR API (x-api-key)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://sdr.thecotocompany.com/api/leads/next?mode=primer_toque&limit=25",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "siguiente-lote",
+      "name": "Siguiente lote",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REEMPLAZAR",
+          "name": "SDR API (x-api-key)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.leads.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "hay-leads",
+      "name": "¿Hay leads?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        920,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "leads",
+        "options": {}
+      },
+      "id": "separar",
+      "name": "Un lead por item",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1140,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "reset": false
+        },
+        "batchSize": 1
+      },
+      "id": "bucle",
+      "name": "Lead a lead",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1360,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://sdr.thecotocompany.com/api/playbook/active",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "playbook-activo",
+      "name": "Playbook activo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1580,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REEMPLAZAR",
+          "name": "SDR API (x-api-key)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ \"Escribe el PRIMER mensaje en frío a este prospecto.\\n\\nNombre: \" + $('Lead a lead').item.json.fullName + \"\\nTitular: \" + ($('Lead a lead').item.json.headline || \"sin titular\") + \"\\nEmpresa: \" + ($('Lead a lead').item.json.company || \"sin empresa\") + \"\\nDatos del perfil: \" + JSON.stringify($('Lead a lead').item.json.raw) + \"\\n\\nEs el primer contacto: rompe el hielo reconociendo que es en frío, ponte de su lado, pide permiso y cierra con una pregunta. Máximo 4 líneas. Devuelve SOLO el texto del mensaje, sin comillas ni explicaciones.\" }}",
+        "options": {
+          "systemMessage": "={{ $json.systemPrompt }}"
+        }
+      },
+      "id": "agente-1",
+      "name": "Redactar primer toque",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        1800,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "model": "={{ $json.modelo || \"anthropic/claude-sonnet-5\" }}",
+        "options": {
+          "temperature": 0.7
+        }
+      },
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        1800,
+        360
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "id": "REEMPLAZAR",
+          "name": "OpenRouter"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://sdr.thecotocompany.com/api/messages/send",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ leadId: $('Lead a lead').item.json.id, texto: $json.output, step: 1, tipo: $('Lead a lead').item.json.linkedinUrl ? \"invitacion\" : \"mensaje\", nuevoEstado: \"contactado\", nextActionAt: new Date(Date.now() + 3*24*3600*1000).toISOString() }) }}"
+      },
+      "id": "enviar-o-dejar-borrador-",
+      "name": "Enviar (o dejar borrador)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2020,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REEMPLAZAR",
+          "name": "SDR API (x-api-key)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "amount": "={{ Math.floor(Math.random() * 141) + 40 }}",
+        "unit": "seconds"
+      },
+      "id": "espera",
+      "name": "Esperar 40-180 s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2240,
+        200
+      ],
+      "webhookId": "espera-outbound"
+    },
+    {
+      "parameters": {},
+      "id": "fin-1",
+      "name": "Nada que hacer",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1140,
+        520
+      ]
+    }
+  ],
+  "connections": {
+    "Cada 30 minutos": {
+      "main": [
+        [
+          {
+            "node": "Reabastecer si hace falta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reabastecer si hace falta": {
+      "main": [
+        [
+          {
+            "node": "Siguiente lote",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Siguiente lote": {
+      "main": [
+        [
+          {
+            "node": "¿Hay leads?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Hay leads?": {
+      "main": [
+        [
+          {
+            "node": "Un lead por item",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Nada que hacer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Un lead por item": {
+      "main": [
+        [
+          {
+            "node": "Lead a lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead a lead": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Playbook activo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Playbook activo": {
+      "main": [
+        [
+          {
+            "node": "Redactar primer toque",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Redactar primer toque",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redactar primer toque": {
+      "main": [
+        [
+          {
+            "node": "Enviar (o dejar borrador)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar (o dejar borrador)": {
+      "main": [
+        [
+          {
+            "node": "Esperar 40-180 s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Esperar 40-180 s": {
+      "main": [
+        [
+          {
+            "node": "Lead a lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

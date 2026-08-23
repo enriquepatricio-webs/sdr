@@ -1,0 +1,372 @@
+/**
+ * Prospección asistida: del ICP a una lista de candidatos puntuados.
+ *
+ * Tres pasos, y el reparto de responsabilidades importa:
+ *   1. El LLM traduce el ICP a los FILTROS de un actor de Apify. Rellena un
+ *      formulario acotado con enums; no elige el actor ni compone la petición.
+ *   2. Apify ejecuta y devuelve perfiles crudos.
+ *   3. El LLM puntúa cada perfil contra el ICP, en lotes.
+ *
+ * Nada de esto escribe en `leads`: los candidatos se quedan en `prospects`
+ * hasta que una persona decide a quién importar.
+ */
+import type { IcpSignal } from './db/schema'
+import { type ProspectSource, SUPPORTED_ACTORS } from './apify'
+import { type Usage, chatJson } from './openrouter'
+
+export type IcpParaProspeccion = {
+  name: string
+  description: string | null
+  criteria: IcpSignal[]
+  disqualifiers: IcpSignal[]
+}
+
+/* -------------------------------------------------------------------------- */
+/* 1. ICP -> filtros del actor                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * El LLM solo puede rellenar estos campos, y los de enum solo con estos valores.
+ *
+ * Deliberadamente NO se expone `industryIds` (exige códigos numéricos de un CSV
+ * externo y el modelo se los inventa) ni `maxItems` (el tope de gasto lo pone el
+ * usuario, no el modelo) ni nada de MongoDB.
+ */
+const SCHEMA_LINKEDIN = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    searchQuery: {
+      type: 'string',
+      description: 'Búsqueda difusa en castellano o inglés. Ej: "fundador consultoría B2B".',
+    },
+    currentJobTitles: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Cargos actuales exactos. Ej: ["Founder","CEO","Socio"].',
+    },
+    locations: {
+      type: 'array',
+      items: { type: 'string' },
+      description:
+        'Ubicaciones tal y como las entiende LinkedIn. Usa el nombre completo del país: "Spain", no "ES".',
+    },
+    companyHeadcount: {
+      type: 'array',
+      items: { type: 'string', enum: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'] },
+      description:
+        'Tamaño de empresa: A=autónomo, B=1-10, C=11-50, D=51-200, E=201-500, F=501-1000, G=1001-5000, H=5001-10000, I=10001+.',
+    },
+    seniorityLevelIds: {
+      type: 'array',
+      items: {
+        type: 'string',
+        enum: ['100', '110', '120', '130', '200', '210', '220', '300', '310', '320'],
+      },
+      description:
+        'Seniority: 120=Senior, 220=Director, 300=VP, 310=CXO, 320=Owner/Partner. Para decisores usa 310 y 320.',
+    },
+    excludeCurrentJobTitles: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Cargos que descartan. Sale de los descalificadores del ICP.',
+    },
+    profileLanguages: {
+      type: 'array',
+      items: { type: 'string', enum: ['Spanish', 'English', 'Portuguese', 'French', 'Italian'] },
+      description: 'Idioma del perfil.',
+    },
+    razonamiento: {
+      type: 'string',
+      description:
+        'Por qué estos filtros y no otros, en dos frases. Es lo que se lee cuando la búsqueda sale mal.',
+    },
+    angulo: {
+      type: 'string',
+      description:
+        'Etiqueta corta de este ángulo de búsqueda, máximo ocho palabras. Ej: "consultoras de RRHH en Valencia".',
+    },
+  },
+  required: ['searchQuery', 'razonamiento', 'angulo'],
+} as const
+
+const SCHEMA_INSTAGRAM = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    search: {
+      type: 'string',
+      description: 'Término de búsqueda o hashtag sin almohadilla. Ej: "consultoria b2b".',
+    },
+    searchType: {
+      type: 'string',
+      enum: ['user', 'hashtag'],
+      description: 'user busca perfiles por nombre; hashtag busca quién publica bajo ese hashtag.',
+    },
+    razonamiento: { type: 'string', description: 'Por qué ese término, en dos frases.' },
+    angulo: { type: 'string', description: 'Etiqueta corta del ángulo, máximo ocho palabras.' },
+  },
+  required: ['search', 'searchType', 'razonamiento', 'angulo'],
+} as const
+
+function describirIcp(icp: IcpParaProspeccion): string {
+  return [
+    `ICP: ${icp.name}`,
+    icp.description ?? '',
+    '',
+    'ENCAJA quien cumple:',
+    ...icp.criteria.map((c) => `- ${c.signal}`),
+    '',
+    'NO encaja quien:',
+    ...icp.disqualifiers.map((d) => `- ${d.signal}`),
+  ].join('\n')
+}
+
+export type FiltrosTraducidos = {
+  input: Record<string, unknown>
+  razonamiento: string
+  angulo: string
+  usage: Usage
+}
+
+export async function traducirIcpAFiltros(
+  icp: IcpParaProspeccion,
+  fuente: ProspectSource,
+  brief: string | null,
+  modelo: string,
+  /**
+   * Ángulos ya usados para este ICP. El modelo tiene que proponer uno
+   * MATERIALMENTE distinto: si no, el reabastecimiento automático repetiría la
+   * misma búsqueda cada vez y traería a la misma gente, que además ya está
+   * importada y se descartaría entera. Búsquedas caras que no aportan nada.
+   */
+  angulosUsados: string[] = [],
+): Promise<FiltrosTraducidos> {
+  const schema = fuente === 'linkedin' ? SCHEMA_LINKEDIN : SCHEMA_INSTAGRAM
+
+  const evitar = angulosUsados.length
+    ? [
+        '',
+        'YA SE HAN BUSCADO ESTOS ÁNGULOS. El tuyo tiene que ser claramente distinto,',
+        'no una variación cosmética del mismo:',
+        ...angulosUsados.map((a) => `- ${a}`),
+        '',
+        'Formas válidas de cambiar de ángulo, en este orden de preferencia:',
+        '1. Otra vertical o sector adyacente que siga cumpliendo el ICP.',
+        '2. Otra zona geográfica.',
+        '3. Otros cargos que también decidan la compra (de fundador a director comercial).',
+        '4. Otro tamaño de empresa dentro del rango del ICP.',
+        'Lo que NO vale: los mismos filtros con una palabra cambiada en searchQuery.',
+      ].join('\n')
+    : ''
+
+  const { data, usage } = await chatJson<
+    Record<string, unknown> & { razonamiento: string; angulo: string }
+  >({
+    model: modelo,
+    // Con ángulos previos sube la temperatura: hace falta variedad de verdad.
+    temperature: angulosUsados.length ? 0.7 : 0.2,
+    messages: [
+      {
+        role: 'system',
+        content: [
+          `Traduces un perfil de cliente ideal a los filtros de búsqueda de ${SUPPORTED_ACTORS[fuente].label}.`,
+          '',
+          'Reglas:',
+          '- Prefiere filtros que estrechen de verdad. Una búsqueda demasiado abierta gasta dinero y devuelve ruido.',
+          '- Pero no la estreches tanto que no salga nadie: si dudas entre dos cargos, pon los dos.',
+          '- Los descalificadores del ICP van a los campos de exclusión cuando exista uno.',
+          '- No inventes valores de enum. Usa solo los que te da el esquema.',
+        ].join('\n'),
+      },
+      {
+        role: 'user',
+        content: [
+          describirIcp(icp),
+          brief ? `\nInstrucción adicional del usuario:\n${brief}` : '',
+          evitar,
+        ]
+          .join('\n')
+          .trim(),
+      },
+    ],
+    jsonSchema: { name: 'filtros_de_busqueda', schema: schema as unknown as Record<string, unknown> },
+  })
+
+  const { razonamiento, angulo, ...input } = data
+  // Un array vacío es un filtro que no filtra y confunde al leer el registro.
+  const limpio = Object.fromEntries(
+    Object.entries(input).filter(([, v]) => !(Array.isArray(v) && v.length === 0) && v !== ''),
+  )
+  return { input: limpio, razonamiento, angulo, usage }
+}
+
+/* -------------------------------------------------------------------------- */
+/* 2. Perfil crudo -> candidato                                                */
+/* -------------------------------------------------------------------------- */
+
+export type CandidatoNormalizado = {
+  fullName: string
+  headline: string | null
+  company: string | null
+  location: string | null
+  linkedinUrl: string | null
+  instagramUsername: string | null
+  email: string | null
+  providerId: string | null
+  raw: Record<string, unknown>
+}
+
+function texto(...valores: unknown[]): string | null {
+  for (const v of valores) {
+    if (typeof v === 'string' && v.trim()) return v.trim()
+  }
+  return null
+}
+
+/**
+ * Los actores cambian los nombres de sus campos entre versiones, así que se
+ * prueban varios alias en vez de confiar en uno. Si no hay nombre ni forma de
+ * contactar, se descarta la fila: un candidato incontactable no vale nada.
+ */
+export function normalizarCandidato(
+  fuente: ProspectSource,
+  item: Record<string, unknown>,
+): CandidatoNormalizado | null {
+  const raw = item as Record<string, any>
+
+  if (fuente === 'linkedin') {
+    const nombre =
+      texto(raw.name, raw.fullName, raw.full_name) ??
+      texto([raw.firstName, raw.lastName].filter(Boolean).join(' '))
+    const url = texto(raw.linkedinUrl, raw.profileUrl, raw.url, raw.publicUrl)
+    const identificador = texto(raw.publicIdentifier, raw.public_identifier)
+    if (!nombre || !(url || identificador)) return null
+
+    return {
+      fullName: nombre,
+      headline: texto(raw.headline, raw.title, raw.occupation),
+      company: texto(
+        raw.currentPosition?.[0]?.companyName,
+        raw.currentCompany?.name,
+        raw.companyName,
+        raw.company,
+      ),
+      location: texto(raw.location?.linkedinText, raw.location?.parsed?.text, raw.location, raw.geo),
+      linkedinUrl: url ?? `https://www.linkedin.com/in/${identificador}`,
+      instagramUsername: null,
+      email: texto(raw.email, raw.emailAddress),
+      providerId: texto(raw.id, raw.profileId, raw.urn),
+      raw: item,
+    }
+  }
+
+  const usuario = texto(raw.username, raw.ownerUsername, raw.userName)
+  if (!usuario) return null
+  return {
+    fullName: texto(raw.fullName, raw.name, raw.ownerFullName) ?? usuario,
+    headline: texto(raw.biography, raw.bio),
+    company: texto(raw.businessCategoryName, raw.categoryName),
+    location: texto(raw.city, raw.locationName),
+    linkedinUrl: null,
+    instagramUsername: usuario,
+    email: texto(raw.publicEmail, raw.email),
+    providerId: texto(raw.id, raw.pk),
+    raw: item,
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* 3. Puntuación contra el ICP                                                 */
+/* -------------------------------------------------------------------------- */
+
+export type Puntuacion = {
+  indice: number
+  score: number
+  verdict: 'encaja' | 'dudoso' | 'no_encaja'
+  reasoning: string
+}
+
+const SCHEMA_PUNTUACION = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    resultados: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          indice: { type: 'integer', description: 'El número que acompaña al candidato.' },
+          score: { type: 'integer', description: 'Encaje con el ICP, de 0 a 100.' },
+          verdict: { type: 'string', enum: ['encaja', 'dudoso', 'no_encaja'] },
+          reasoning: {
+            type: 'string',
+            description: 'Una frase. Qué señal concreta del perfil lo decide.',
+          },
+        },
+        required: ['indice', 'score', 'verdict', 'reasoning'],
+      },
+    },
+  },
+  required: ['resultados'],
+} as const
+
+/** Lotes: puntuar de uno en uno multiplica el coste y la latencia sin mejorar nada. */
+const TAMANO_LOTE = 12
+
+export async function puntuarCandidatos(
+  icp: IcpParaProspeccion,
+  candidatos: CandidatoNormalizado[],
+  modelo: string,
+): Promise<{ puntuaciones: Map<number, Puntuacion>; costeUsd: number }> {
+  const puntuaciones = new Map<number, Puntuacion>()
+  let costeUsd = 0
+
+  for (let inicio = 0; inicio < candidatos.length; inicio += TAMANO_LOTE) {
+    const lote = candidatos.slice(inicio, inicio + TAMANO_LOTE)
+    const listado = lote
+      .map((c, i) =>
+        [
+          `### Candidato ${inicio + i}`,
+          `Nombre: ${c.fullName}`,
+          c.headline ? `Titular: ${c.headline}` : '',
+          c.company ? `Empresa: ${c.company}` : '',
+          c.location ? `Ubicación: ${c.location}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      )
+      .join('\n\n')
+
+    const { data, usage } = await chatJson<{ resultados: Puntuacion[] }>({
+      model: modelo,
+      temperature: 0,
+      messages: [
+        {
+          role: 'system',
+          content: [
+            'Puntúas candidatos contra un perfil de cliente ideal. Devuelves un resultado por candidato, con su índice.',
+            '',
+            'Un descalificador del ICP fuerza no_encaja y score por debajo de 20, por muy bien que encaje en lo demás.',
+            'Si el perfil no da información suficiente para decidir, es "dudoso": no lo apruebes por si acaso.',
+            'Sé duro. Estos candidatos van a recibir un mensaje de una persona real.',
+          ].join('\n'),
+        },
+        { role: 'user', content: `${describirIcp(icp)}\n\n---\n\n${listado}` },
+      ],
+      jsonSchema: {
+        name: 'puntuaciones',
+        schema: SCHEMA_PUNTUACION as unknown as Record<string, unknown>,
+      },
+    })
+
+    costeUsd += usage.cost ?? 0
+    for (const r of data.resultados) {
+      // Se recorta en vez de confiar: el CHECK de la base rechazaría un 140.
+      puntuaciones.set(r.indice, { ...r, score: Math.max(0, Math.min(100, r.score)) })
+    }
+  }
+
+  return { puntuaciones, costeUsd }
+}

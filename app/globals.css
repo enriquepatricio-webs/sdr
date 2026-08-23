@@ -1,0 +1,90 @@
+@import 'tailwindcss';
+
+/*
+  Sala de control.
+
+  El color no decora: codifica reversibilidad. Es la única distinción que
+  importa en este producto y por eso es la que manda en la paleta.
+
+    --vivo    algo que sale hacia una persona real. Irreversible.
+    --ensayo  algo que se queda aquí dentro. Borradores, pruebas, simulacros.
+
+  Nada más usa esos dos colores. Si algo es rojo, alguien lo va a recibir.
+*/
+
+@theme {
+  --color-papel: #f6f7f9;
+  --color-lienzo: #ffffff;
+  --color-tinta: #10141c;
+  --color-apagado: #59637a;
+  --color-tenue: #8a93a6;
+  --color-linea: #e3e7ee;
+  --color-linea-fuerte: #cfd6e2;
+
+  --color-vivo: #d2321d;
+  --color-vivo-suave: #fdf0ee;
+  --color-ensayo: #23457c;
+  --color-ensayo-suave: #eef2f9;
+
+  --color-ok: #1d7a52;
+  --color-aviso: #9a6208;
+
+  --font-display: var(--fuente-display), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--fuente-mono), ui-monospace, monospace;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--color-papel);
+  color: var(--color-tinta);
+  font-family: var(--font-display);
+  font-feature-settings: 'ss01', 'cv01';
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Etiquetas de instrumento: pequeñas, anchas, en mayúsculas. */
+.etiqueta {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-tenue);
+}
+
+/* Foco visible siempre. Se navega esto con teclado más de lo que parece. */
+:where(a, button, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-ensayo);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+::selection {
+  background: var(--color-ensayo);
+  color: #fff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/*
+  Franja superior de estado. Con el autopiloto encendido, el propio marco de la
+  aplicación se pone en rojo: el dato más peligroso del sistema no puede estar
+  escondido en una pantalla de ajustes.
+*/
+.franja-estado {
+  height: 3px;
+  background: var(--color-linea-fuerte);
+}
+.franja-estado[data-autopiloto='on'] {
+  background: var(--color-vivo);
+}
