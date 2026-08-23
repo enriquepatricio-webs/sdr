@@ -17,6 +17,17 @@ type Iman = {
   contactos: Contacto[]
 }
 
+/**
+ * Lo que se manda al que comenta, antes de darle nada.
+ *
+ * Viene escrito para que crear un imán no obligue a redactar en frío, y se puede
+ * cambiar. Pide el follow de forma directa y sin pretextos: la condición es la
+ * condición, y disfrazarla de "así me aseguro de que te llega" suena a excusa.
+ * Sin cifras, como todo lo que sale de este sistema.
+ */
+const MENSAJE_FOLLOW =
+  '¡Hola! He visto tu comentario, te lo mando ahora mismo.\n\nSolo te pido una cosa a cambio: dale a seguir y te lo paso. Es lo único.'
+
 const control =
   'w-full border border-linea-fuerte bg-papel px-2 py-1.5 text-sm outline-none focus:border-ensayo'
 
@@ -173,10 +184,23 @@ export function Imanes({
           </label>
           <label className="space-y-1 sm:col-span-2">
             <span className="etiqueta">Mensaje pidiendo el follow</span>
-            <textarea name="followMessage" required rows={3} className={control} />
+            <p className="text-xs text-tenue">
+              Es el primer DM. Va antes de entregar nada; el recurso solo sale cuando la persona
+              sigue de verdad.
+            </p>
+            <textarea
+              name="followMessage"
+              required
+              rows={3}
+              defaultValue={MENSAJE_FOLLOW}
+              className={control}
+            />
           </label>
           <label className="space-y-1 sm:col-span-2">
             <span className="etiqueta">Recurso (texto o enlace)</span>
+            <p className="text-xs text-tenue">
+              Lo que recibe una vez comprobado que sigue. Sin cifras de dinero: no salen por chat.
+            </p>
             <textarea name="resource" required rows={3} className={control} />
           </label>
           <div className="sm:col-span-2">
