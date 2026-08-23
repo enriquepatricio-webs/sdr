@@ -440,19 +440,40 @@ export function normalizarCandidato(
     const identificador = texto(raw.publicIdentifier, raw.public_identifier);
     if (!nombre || !(url || identificador)) return null;
 
+    /**
+     * El actor devuelve `currentPositions`, en PLURAL.
+     *
+     * Se leía en singular, así que el cargo y la empresa quedaban a null y al
+     * puntuador le llegaba un nombre suelto: "Vivian Garcia" en lugar de "CEO
+     * Founder en Marcas que Enamoran®, Madrid". Con eso rechazaba a casi todo el
+     * mundo por falta de información —dos aprobados de cada cincuenta— y LinkedIn
+     * parecía un canal inservible cuando lo que fallaba era una letra.
+     */
+    const puesto =
+      (Array.isArray(raw.currentPositions) ? raw.currentPositions[0] : null) ??
+      (Array.isArray(raw.currentPosition) ? raw.currentPosition[0] : null) ??
+      {};
+    const acercaDe = texto(raw.summary, raw.about);
+
     return {
       fullName: nombre,
       senales: [
         raw.connectionsCount ? `${raw.connectionsCount} contactos` : "",
         raw.followerCount ? `${raw.followerCount} seguidores` : "",
-        texto(raw.currentPosition?.[0]?.companyIndustry, raw.industry),
-        raw.currentPosition?.[0]?.companyStaffCountRange
-          ? `plantilla ${raw.currentPosition[0].companyStaffCountRange}`
+        texto(puesto.companyIndustry, raw.industry),
+        puesto.companyStaffCountRange
+          ? `plantilla ${puesto.companyStaffCountRange}`
           : "",
+        puesto.tenureAtCompany?.numYears
+          ? `${puesto.tenureAtCompany.numYears} años en la empresa`
+          : "",
+        raw.openProfile ? "perfil abierto a mensajes" : "",
+        // El "acerca de" es lo que mejor dice a qué se dedica de verdad.
+        acercaDe ? `se describe así: ${acercaDe.slice(0, 400)}` : "",
       ].filter((x): x is string => Boolean(x)),
-      headline: texto(raw.headline, raw.title, raw.occupation),
+      headline: texto(puesto.title, raw.headline, raw.title, raw.occupation),
       company: texto(
-        raw.currentPosition?.[0]?.companyName,
+        puesto.companyName,
         raw.currentCompany?.name,
         raw.companyName,
         raw.company,

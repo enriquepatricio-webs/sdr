@@ -24,25 +24,31 @@ export const maxDuration = 300;
 const CAMPANAS_POR_VUELTA = 4;
 
 /**
- * El presupuesto del día, repartido a lo largo del día.
+ * El presupuesto del día, liberado CUANDO SIRVE.
  *
- * El cron pasa cada media hora, así que con el tope diario a secas las primeras
- * cinco vueltas se lo gastaban entero antes del amanecer y no quedaba nada para
- * las veintiuna horas siguientes: una campaña que se quedaba seca a media tarde
- * no podía reponer hasta el día siguiente.
+ * Con el tope diario a secas, las primeras vueltas del cron se lo gastaban
+ * entero antes del amanecer y una campaña que se secaba a media tarde no podía
+ * reponer hasta el día siguiente. Pero repartirlo linealmente entre las
+ * veinticuatro horas era el error contrario: la mitad se liberaba de madrugada,
+ * cuando las ventanas de envío están cerradas y no hace falta.
  *
- * Se libera en proporción a lo que va del día, con un mínimo para que a primera
- * hora ya se pueda hacer algo. Es la misma idea que un cubo con goteo, sin
- * necesidad de guardar estado.
+ * Los leads se consumen entre las 09:00 y las 18:00 de Madrid. Así que se
+ * libera un poco de antemano —para llegar con la despensa llena— y el resto
+ * durante la mañana. Las horas son UTC porque es lo que da el reloj del
+ * servidor; en Madrid son dos más en verano.
  */
-function presupuestoHastaAhora(topeDiario: number, ahora: Date): number {
-  const minutos = ahora.getHours() * 60 + ahora.getMinutes();
-  const proporcional = Math.ceil((topeDiario * minutos) / (24 * 60));
-  return Math.max(MINIMO_POR_ARRANQUE, Math.min(topeDiario, proporcional));
-}
+const RELEASE_DESDE_UTC = 5; // 07:00 en Madrid: antes de que abra la ventana
+const RELEASE_HASTA_UTC = 13; // 15:00 en Madrid: a media tarde ya está todo
 
-/** Con esto se arranca el día sin esperar a que el reloj libere presupuesto. */
+/** Con esto se arranca la madrugada sin esperar a que el reloj libere nada. */
 const MINIMO_POR_ARRANQUE = 4;
+
+function presupuestoHastaAhora(topeDiario: number, ahora: Date): number {
+  const h = ahora.getUTCHours() + ahora.getUTCMinutes() / 60;
+  const avance = (h - RELEASE_DESDE_UTC) / (RELEASE_HASTA_UTC - RELEASE_DESDE_UTC);
+  const proporcional = Math.ceil(topeDiario * Math.min(1, Math.max(0, avance)));
+  return Math.max(Math.min(MINIMO_POR_ARRANQUE, topeDiario), Math.min(topeDiario, proporcional));
+}
 
 /**
  * Rellena la cola de leads cuando se está quedando vacía.

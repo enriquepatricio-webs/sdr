@@ -95,13 +95,17 @@ prueba('el plan NO contiene ningún dato de cupo de envío', () => {
    no aquí, esta prueba deja de significar nada: por eso comprueba propiedades
    (nunca pasarse, ser creciente) y no números concretos. */
 const MINIMO_POR_ARRANQUE = 4
+const RELEASE_DESDE_UTC = 5
+const RELEASE_HASTA_UTC = 13
 function presupuestoHastaAhora(topeDiario: number, ahora: Date): number {
-  const minutos = ahora.getHours() * 60 + ahora.getMinutes()
-  const proporcional = Math.ceil((topeDiario * minutos) / (24 * 60))
-  return Math.max(MINIMO_POR_ARRANQUE, Math.min(topeDiario, proporcional))
+  const h = ahora.getUTCHours() + ahora.getUTCMinutes() / 60
+  const avance = (h - RELEASE_DESDE_UTC) / (RELEASE_HASTA_UTC - RELEASE_DESDE_UTC)
+  const proporcional = Math.ceil(topeDiario * Math.min(1, Math.max(0, avance)))
+  return Math.max(Math.min(MINIMO_POR_ARRANQUE, topeDiario), Math.min(topeDiario, proporcional))
 }
 
-const alas = (h: number, m = 0) => new Date(2026, 7, 24, h, m)
+/** Una hora UTC concreta, que es lo que lee el servidor. */
+const alas = (h: number, m = 0) => new Date(Date.UTC(2026, 7, 24, h, m))
 
 prueba('el goteo nunca supera el tope del día', () => {
   for (let h = 0; h < 24; h++) {
@@ -122,12 +126,23 @@ prueba('el goteo crece a lo largo del día y llega al tope', () => {
   assert.equal(presupuestoHastaAhora(20, alas(23, 59)), 20, 'al final del día no se libera todo')
 })
 
-prueba('a primera hora se puede arrancar aunque el reloj no haya liberado nada', () => {
+prueba('de madrugada se puede arrancar aunque el reloj no haya liberado nada', () => {
   assert.equal(
     presupuestoHastaAhora(20, alas(0, 1)),
     MINIMO_POR_ARRANQUE,
-    'a las 00:01 el sistema se quedaría sin poder buscar nada',
+    'de madrugada el sistema se quedaría sin poder buscar nada',
   )
+})
+
+prueba('cuando abre la ventana de envío ya hay presupuesto de sobra', () => {
+  // 07:00 UTC = 09:00 en Madrid, que es cuando empieza a enviarse.
+  const alAbrir = presupuestoHastaAhora(20, alas(7))
+  assert.ok(
+    alAbrir >= 5,
+    `al abrir la ventana solo había ${alAbrir} búsquedas liberadas: las campañas secas no llegan a llenarse`,
+  )
+  // Y a media tarde, todo.
+  assert.equal(presupuestoHastaAhora(20, alas(13)), 20)
 })
 
 prueba('un tope pequeño no se infla por el mínimo de arranque', () => {
