@@ -43,6 +43,22 @@ export function Ajustes({
   const [confirmandoAutopiloto, setConfirmando] = useState(false)
   const [conectando, setConectando] = useState<string | null>(null)
   const [sincronizando, setSincronizando] = useState(false)
+  const [buscandoChat, setBuscandoChat] = useState(false)
+  const [chats, setChats] = useState<{ id: number; tipo: string; nombre: string }[] | null>(null)
+  const [pistaChat, setPistaChat] = useState<string | null>(null)
+
+  async function identificarChat() {
+    setBuscandoChat(true)
+    setChats(null)
+    setPistaChat(null)
+    try {
+      const res = await fetch('/api/telegram/identify')
+      const json = await res.json()
+      if (!res.ok) { setPistaChat(json.error ?? 'No se pudo consultar Telegram.'); return }
+      setChats(json.chats ?? [])
+      if (!json.chats?.length) setPistaChat(json.pista ?? 'Escríbele /start al bot y vuelve a buscar.')
+    } finally { setBuscandoChat(false) }
+  }
 
   async function conectar(proveedor: 'LINKEDIN' | 'INSTAGRAM' | 'GOOGLE') {
     setConectando(proveedor)
@@ -55,10 +71,10 @@ export function Ajustes({
       })
       const json = await res.json()
       if (!res.ok) { setAviso(json.error ?? 'No se pudo generar el enlace.'); return }
-      // Se abre en una pestaña aparte: las credenciales se meten en la pantalla
-      // de Unipile, nunca aquí.
-      window.open(json.url, '_blank', 'noopener,noreferrer')
-      setAviso('Se abrió el asistente de Unipile. Cuando termines, pulsa "Sincronizar".')
+      // Navegación en la misma pestaña, no window.open: el await rompe la cadena
+      // del gesto del usuario y Safari bloquea la ventana emergente, con lo que
+      // al pulsar no pasaba nada. Al terminar, Unipile devuelve a /conectado.
+      window.location.href = json.url
     } finally { setConectando(null) }
   }
 
@@ -69,11 +85,18 @@ export function Ajustes({
       const res = await fetch('/api/accounts/sync', { method: 'POST' })
       const json = await res.json()
       if (!res.ok) { setAviso(json.error ?? 'No se pudo sincronizar.'); return }
-      setAviso(
-        json.nuevas.length
-          ? `${json.nuevas.length} cuenta(s) nueva(s): ${json.nuevas.join(', ')}. Entran en pausa; actívalas abajo.`
-          : `Sin cuentas nuevas (${json.encontradas} vistas en Unipile).`,
-      )
+      const partes: string[] = []
+      if (json.nuevas.length) {
+        partes.push(`${json.nuevas.length} nueva(s): ${json.nuevas.join(', ')}. Entran en pausa.`)
+      }
+      if (json.actualizadas?.length) partes.push(json.actualizadas.join(', '))
+      // Sin esto, conectar un WhatsApp o un Telegram salía como "sin cuentas
+      // nuevas" aunque el servidor supiera exactamente por qué lo descartó.
+      if (json.ignoradas?.length) {
+        partes.push(`Ignoradas por canal no soportado: ${json.ignoradas.join(', ')}.`)
+      }
+      if (!partes.length) partes.push(`Sin cambios (${json.encontradas} cuentas vistas en Unipile).`)
+      setAviso(partes.join(' '))
       router.refresh()
     } finally { setSincronizando(false) }
   }
@@ -316,13 +339,66 @@ export function Ajustes({
                 ? 'Hay uno en las variables de entorno. Lo que pongas aquí manda sobre él.'
                 : 'Habla con @userinfobot en Telegram para saber tu chat_id.'}
             </p>
-            <input
-              id="telegram"
-              value={ajustes.telegramChatId}
-              onChange={(e) => setAjustes({ ...ajustes, telegramChatId: e.target.value })}
-              onBlur={() => guardarAjustes({ telegramChatId: ajustes.telegramChatId })}
-              className={`${entrada} mt-1.5 font-mono`}
-            />
+            <div className="mt-1.5 flex gap-2">
+              <input
+                id="telegram"
+                value={ajustes.telegramChatId}
+                onChange={(e) => setAjustes({ ...ajustes, telegramChatId: e.target.value })}
+                onBlur={() => guardarAjustes({ telegramChatId: ajustes.telegramChatId })}
+                className={`${entrada} font-mono`}
+              />
+              <button
+                type="button"
+                onClick={identificarChat}
+                disabled={buscandoChat}
+                className="shrink-0 border border-linea-fuerte px-3 text-sm hover:border-tinta disabled:opacity-40"
+              >
+                {buscandoChat ? 'Buscando…' : 'Identificar'}
+              </button>
+            </div>
+
+            {pistaChat && <p className="mt-2 text-xs text-aviso">{pistaChat}</p>}
+
+            {chats && chats.length > 0 && (
+              <ul className="mt-2 space-y-1 border border-linea bg-papel p-2">
+                {chats.map((c) => (
+                  <li key={c.id} className="flex items-center gap-2 text-sm">
+                    <span className="flex-1 truncate">
+                      {c.nombre} <span className="text-tenue">· {c.tipo}</span>
+                    </span>
+                    <span className="font-mono text-xs text-tenue">{c.id}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAjustes({ ...ajustes, telegramChatId: String(c.id) })
+                        guardarAjustes({ telegramChatId: String(c.id) })
+                        setChats(null)
+                      }}
+                      className="etiqueta hover:text-tinta"
+                    >
+                      Usar este
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {ajustes.telegramChatId && (
+              <button
+                type="button"
+                onClick={async () => {
+                  const res = await fetch('/api/notify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tipo: 'libre', texto: 'Prueba de avisos del SDR.' }),
+                  })
+                  setAviso(res.ok ? 'Aviso de prueba enviado.' : 'No llegó: revisa el chat id.')
+                }}
+                className="etiqueta mt-2 hover:text-tinta"
+              >
+                Enviar aviso de prueba
+              </button>
+            )}
           </div>
         </section>
 

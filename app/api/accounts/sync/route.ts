@@ -39,14 +39,21 @@ export async function POST() {
       const existente = porId.get(r.id)
 
       if (!existente) {
-        await db.insert(accounts).values({
-          unipileAccountId: r.id,
-          provider: canal,
-          displayName: r.name || `${canal} ${r.id.slice(0, 6)}`,
-          dailyLimit: DEFAULT_DAILY_LIMIT,
-          hourlyLimit: DEFAULT_HOURLY_LIMIT[canal] ?? null,
-          status: 'paused',
-        })
+        await db
+          .insert(accounts)
+          .values({
+            unipileAccountId: r.id,
+            provider: canal,
+            displayName: r.name || `${canal} ${r.id.slice(0, 6)}`,
+            dailyLimit: DEFAULT_DAILY_LIMIT,
+            hourlyLimit: DEFAULT_HOURLY_LIMIT[canal] ?? null,
+            // Una cuenta que Unipile ya ve rota no entra como "en pausa": entra
+            // como desconectada. Si no, la activas, falla el primer envío y no
+            // hay forma de saber por qué.
+            status: sanaEnUnipile ? 'paused' : 'disconnected',
+          })
+          // Dos clics seguidos en Sincronizar daban un 500 por clave duplicada.
+          .onConflictDoNothing({ target: accounts.unipileAccountId })
         nuevas.push(r.name || r.id)
         continue
       }

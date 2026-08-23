@@ -10,6 +10,9 @@ import { getSettings } from '@/lib/settings'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
+/** Símbolos, códigos y palabras de moneda. Se prefiere bloquear de más. */
+const MENCIONA_DINERO = /(€|\$|£|\bEUR\b|\bUSD\b|\bGBP\b|\beuros?\b|\bd[oó]lares?\b|\blibras?\b)/i
+
 const cuerpo = z.object({
   leadId: z.string().uuid(),
   texto: z.string().min(1),
@@ -46,6 +49,34 @@ export async function POST(request: Request) {
   const body = await parseBody(request, cuerpo)
   if (!body.ok) return body.response
   const d = body.data
+
+  /**
+   * Ningún mensaje sale con una cifra de dinero dentro.
+   *
+   * No basta con pedírselo al prompt, por dos motivos. Uno: una instrucción es
+   * una petición, no una condición. Y dos, el que no se ve: el contexto de la
+   * empresa sale de scrapear su propia web, y las webs llevan tarifas — así que
+   * los precios vuelven a entrar en el prompt por detrás después de haberlos
+   * quitado del playbook.
+   *
+   * Este fichero es la única puerta por la que sale texto hacia una persona, así
+   * que es el único sitio donde el control cubre a la vez a los tres workflows
+   * y a la intervención manual.
+   */
+  if (MENCIONA_DINERO.test(d.texto)) {
+    await db.insert(runLogs).values({
+      workflow: 'sdr-envio',
+      level: 'warn',
+      message: 'Mensaje bloqueado: mencionaba dinero.',
+      // El leadId va en el payload y no en la columna: si el lead no existiera,
+      // la clave ajena convertiría el bloqueo en un 500.
+      payload: { leadId: d.leadId, texto: d.texto },
+    })
+    return jsonError(
+      'Ese mensaje menciona dinero y no puede salir. Reescríbelo sin cifras ni monedas: explica por qué el número se da en la reunión y cierra pidiendo el día.',
+      422,
+    )
+  }
 
   try {
     const [fila] = await db

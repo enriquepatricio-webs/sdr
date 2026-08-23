@@ -21,7 +21,19 @@ export async function POST(request: Request) {
   const body = await parseBody(request, cuerpo)
   if (!body.ok) return body.response
 
-  const base = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
+  /**
+   * El origen desde el que se está pidiendo, no una variable de entorno.
+   *
+   * Con NEXT_PUBLIC_APP_URL, si esa variable apunta a otro dominio (un preview,
+   * http en vez de https, o con barra final) Unipile te devuelve a un origen
+   * donde tu cookie NO EXISTE. No es que no viaje: es que se firmó en otro
+   * sitio. Y entonces parece que conectar la cuenta te ha cerrado la sesión.
+   *
+   * La petición viene por fetch desde el propio dashboard, así que Origin
+   * siempre llega y siempre es el host exacto en el que está el usuario.
+   */
+  const base =
+    request.headers.get('origin') ?? process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
 
   try {
     const { url } = await crearEnlaceDeConexion({

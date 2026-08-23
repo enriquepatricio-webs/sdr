@@ -15,12 +15,30 @@ export async function GET() {
   }
 }
 
-const cuerpo = z.object({
-  autopilot: z.boolean().optional(),
-  openrouterModel: z.string().min(1).optional(),
-  telegramChatId: z.string().optional(),
-  companyName: z.string().min(1).optional(),
-})
+/**
+ * Tiene que aceptar TODO lo que manda la pantalla de ajustes.
+ *
+ * Antes solo listaba cuatro campos, y zod descarta las claves desconocidas sin
+ * quejarse: el endpoint devolvía 200, la interfaz escribía "Guardado." y no se
+ * guardaba nada. Un fallo silencioso perfecto, y muy caro de depurar.
+ *
+ * `.strict()` es lo que impide que vuelva a pasar: una clave que no esté aquí
+ * ahora da un 400 explícito en vez de desaparecer.
+ */
+const cuerpo = z
+  .object({
+    autopilot: z.boolean().optional(),
+    openrouterModel: z.string().min(1).optional(),
+    telegramChatId: z.string().optional(),
+    companyName: z.string().min(1).optional(),
+    enrichBeforeContact: z.boolean().optional(),
+    autoProspect: z.boolean().optional(),
+    autoProspectMinLeads: z.number().int().min(1).max(1000).optional(),
+    autoProspectMaxSearchesPerDay: z.number().int().min(1).max(50).optional(),
+    autoProspectMaxItems: z.number().int().min(1).max(500).optional(),
+    autoProspectMinScore: z.number().int().min(0).max(100).optional(),
+  })
+  .strict()
 
 export async function PATCH(request: Request) {
   const body = await parseBody(request, cuerpo)
