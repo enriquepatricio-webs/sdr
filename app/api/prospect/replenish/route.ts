@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { and, count, desc, eq, gte, isNotNull, ne } from "drizzle-orm";
+import { and, count, desc, eq, gte, isNotNull, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   campaigns,
@@ -87,7 +87,31 @@ export async function POST() {
         ),
     ]);
 
-    const empresas = await listarWorkspaces();
+    /**
+     * Primero la empresa que lleva más tiempo sin que se le busque nada.
+     *
+     * Se recorrían por antigüedad y solo caben unas pocas campañas por vuelta,
+     * así que la empresa más antigua se llevaba todas las plazas y la otra no
+     * prospectaba nunca: Aplavo se quedó con cero leads mientras The Coto
+     * Company acumulaba cientos de candidatos.
+     */
+    const ultimaBusqueda = await db
+      .select({
+        workspaceId: prospectSearches.workspaceId,
+        cuando: sql<string>`max(${prospectSearches.createdAt})`,
+      })
+      .from(prospectSearches)
+      .where(eq(prospectSearches.origin, "automatica"))
+      .groupBy(prospectSearches.workspaceId);
+    const cuandoPor = new Map(
+      ultimaBusqueda.map((f) => [f.workspaceId, f.cuando]),
+    );
+
+    const empresas = (await listarWorkspaces()).sort((a, b) =>
+      String(cuandoPor.get(a.id) ?? "").localeCompare(
+        String(cuandoPor.get(b.id) ?? ""),
+      ),
+    );
     const lanzadas: {
       empresa: string;
       campana: string;
@@ -127,8 +151,8 @@ export async function POST() {
       // Como mucho unas pocas por vuelta: cada una lleva una llamada al modelo
       // para traducir el ICP a filtros, y ocho seguidas no caben en los 300 s
       // de la función. El cron pasa cada media hora, así que no se pierde nada.
-      const hueco = CAMPANAS_POR_VUELTA - lanzadas.length
-      if (hueco <= 0) break
+      const hueco = CAMPANAS_POR_VUELTA - lanzadas.length;
+      if (hueco <= 0) break;
 
       await lanzarPara(
         empresa.name,

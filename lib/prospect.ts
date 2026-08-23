@@ -300,7 +300,18 @@ export async function traducirIcpAFiltros(
  * sitio y para que las dos no se desincronicen.
  */
 /** Valores que el actor de LinkedIn acepta. Fuera de esta lista devuelve un 400. */
-const SENIORITY_VALIDOS = ["100", "110", "120", "130", "200", "210", "220", "300", "310", "320"];
+const SENIORITY_VALIDOS = [
+  "100",
+  "110",
+  "120",
+  "130",
+  "200",
+  "210",
+  "220",
+  "300",
+  "310",
+  "320",
+];
 const HEADCOUNT_VALIDOS = ["A", "B", "C", "D", "E", "F", "G", "H", "I"];
 
 /**
@@ -313,9 +324,14 @@ const HEADCOUNT_VALIDOS = ["A", "B", "C", "D", "E", "F", "G", "H", "I"];
  * menos devuelve gente de más, que se recupera puntuando; un 400 no devuelve
  * nada.
  */
-function soloValores(valor: unknown, permitidos: string[]): string[] | undefined {
+function soloValores(
+  valor: unknown,
+  permitidos: string[],
+): string[] | undefined {
   if (!Array.isArray(valor)) return undefined;
-  const limpio = valor.map((v) => String(v)).filter((v) => permitidos.includes(v));
+  const limpio = valor
+    .map((v) => String(v))
+    .filter((v) => permitidos.includes(v));
   return limpio.length ? limpio : undefined;
 }
 
@@ -367,7 +383,7 @@ export function construirEntrada(
 /* -------------------------------------------------------------------------- */
 
 export type CandidatoNormalizado = {
-  fullName: string
+  fullName: string;
   /**
    * Los hechos observables que sirven para decidir si encaja.
    *
@@ -386,6 +402,17 @@ export type CandidatoNormalizado = {
   providerId: string | null;
   raw: Record<string, unknown>;
 };
+
+/** De "https://www.instagram.com/antares_remax/" saca "antares_remax". */
+function usuarioDeUrlInstagram(url: unknown): string | null {
+  if (typeof url !== "string") return null;
+  const m = url.match(/instagram\.com\/([A-Za-z0-9._]+)/);
+  const usuario = m?.[1]?.toLowerCase();
+  // Rutas de la propia plataforma, no cuentas.
+  return usuario && !["p", "reel", "explore", "stories"].includes(usuario)
+    ? usuario
+    : null;
+}
 
 function texto(...valores: unknown[]): string | null {
   for (const v of valores) {
@@ -452,25 +479,33 @@ export function normalizarCandidato(
     const correo = texto(correos[0], raw.email, raw.contactEmail);
     if (!nombre || !correo) return null;
 
-    const horas = Array.isArray(raw.openingHours) ? raw.openingHours : []
+    const horas = Array.isArray(raw.openingHours) ? raw.openingHours : [];
     // Un horario con dos tramos ("10 AM to 2 PM, 5 to 9 PM") es servicio de
     // comidas y cenas, que es la señal más fiable de que hay equipo de sala.
-    const partido = horas.some((h: { hours?: string }) => (h?.hours ?? "").includes(","))
+    const partido = horas.some((h: { hours?: string }) =>
+      (h?.hours ?? "").includes(","),
+    );
     const abiertos = horas.filter(
       (h: { hours?: string }) => (h?.hours ?? "").toLowerCase() !== "cerrado",
-    ).length
+    ).length;
 
     return {
       fullName: nombre,
       senales: [
-        raw.reviewsCount ? `${raw.reviewsCount} reseñas en Google` : "sin reseñas",
+        raw.reviewsCount
+          ? `${raw.reviewsCount} reseñas en Google`
+          : "sin reseñas",
         raw.totalScore ? `nota ${raw.totalScore}` : "",
         Array.isArray(raw.categories) && raw.categories.length
           ? `categorías: ${raw.categories.slice(0, 4).join(", ")}`
           : "",
-        horas.length ? `abre ${abiertos} días/semana${partido ? ", horario partido" : ""}` : "",
+        horas.length
+          ? `abre ${abiertos} días/semana${partido ? ", horario partido" : ""}`
+          : "",
         raw.website ? `web propia: ${raw.website}` : "sin web",
-        Array.isArray(raw.instagrams) && raw.instagrams.length ? "tiene Instagram" : "",
+        Array.isArray(raw.instagrams) && raw.instagrams.length
+          ? "tiene Instagram"
+          : "",
         Array.isArray(raw.emails) && raw.emails.length > 3
           ? `${raw.emails.length} correos distintos en su web (indicio de plantilla)`
           : "",
@@ -483,7 +518,12 @@ export function normalizarCandidato(
       linkedinUrl: texto(
         Array.isArray(raw.linkedIns) ? raw.linkedIns[0] : null,
       ),
-      instagramUsername: null,
+      // Maps devuelve las redes que encuentra en la web del negocio. Guardar el
+      // usuario permite que un mismo hallazgo sirva para escribir por correo o
+      // por Instagram, en vez de pagar dos búsquedas distintas.
+      instagramUsername: usuarioDeUrlInstagram(
+        Array.isArray(raw.instagrams) ? raw.instagrams[0] : null,
+      ),
       email: correo,
       // El placeId es estable entre ejecuciones; la URL de Maps no siempre.
       providerId: texto(raw.placeId, raw.fid, raw.cid),
@@ -500,7 +540,9 @@ export function normalizarCandidato(
       raw.postsCount ? `${raw.postsCount} publicaciones` : "",
       raw.verified ? "cuenta verificada" : "",
       raw.isBusinessAccount ? "cuenta de empresa" : "",
-      texto(raw.externalUrl, raw.website) ? `web: ${texto(raw.externalUrl, raw.website)}` : "sin web",
+      texto(raw.externalUrl, raw.website)
+        ? `web: ${texto(raw.externalUrl, raw.website)}`
+        : "sin web",
     ].filter((x): x is string => Boolean(x)),
     headline: texto(raw.biography, raw.bio),
     company: texto(raw.businessCategoryName, raw.categoryName),
