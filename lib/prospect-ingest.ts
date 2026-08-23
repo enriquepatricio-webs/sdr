@@ -107,7 +107,16 @@ export async function ingerir(
   // de qué puntuación un candidato entra solo en su campaña.
   const ajustes = await ajustesEfectivos(workspaceId);
 
-  const crudos = await getDatasetItems(datasetId, { limit: 500 });
+  /**
+   * Solo lo que se pidió, no lo que el actor decidió devolver.
+   *
+   * Algunos actores ignoran el tope: se pedían 60 perfiles de Instagram y
+   * devolvía 215. Puntuar cuesta una llamada al modelo por cada doce, así que
+   * traer de más multiplica la factura por algo que nadie encargó. Un poco de
+   * margen sí, por si vienen filas inservibles que se caen al normalizar.
+   */
+  const tope = Math.min(500, Math.round(ajustes.autoProspectMaxItems * 1.5));
+  const crudos = await getDatasetItems(datasetId, { limit: tope });
   const conocidas = await identidadesConocidas(workspaceId);
 
   const todos = crudos

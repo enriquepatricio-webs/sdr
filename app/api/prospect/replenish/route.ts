@@ -84,6 +84,10 @@ export async function POST() {
           and(
             eq(prospectSearches.origin, "automatica"),
             gte(prospectSearches.createdAt, inicioDelDia),
+            // Una búsqueda que no llegó a arrancar no gastó nada en Apify, así
+            // que no puede gastar presupuesto. Con el límite mensual agotado se
+            // perdieron nueve huecos del día por rechazos que costaron cero.
+            ne(prospectSearches.status, "fallida"),
           ),
         ),
     ]);
@@ -357,6 +361,10 @@ export async function GET() {
           and(
             eq(prospectSearches.origin, "automatica"),
             gte(prospectSearches.createdAt, inicioDelDia),
+            // Una búsqueda que no llegó a arrancar no gastó nada en Apify, así
+            // que no puede gastar presupuesto. Con el límite mensual agotado se
+            // perdieron nueve huecos del día por rechazos que costaron cero.
+            ne(prospectSearches.status, "fallida"),
           ),
         ),
       db
