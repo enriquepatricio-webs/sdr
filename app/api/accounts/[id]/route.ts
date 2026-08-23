@@ -14,6 +14,17 @@ const cuerpo = z.object({
   status: z.enum(['active', 'paused', 'disconnected']).optional(),
   /** Para mover una cuenta que se conectó estando en la empresa equivocada. */
   workspaceId: z.string().uuid().optional(),
+  /**
+   * El @usuario real de Instagram. Hace falta para comprobar quién te sigue;
+   * sin él los lead magnets no pueden entregar el recurso a nadie.
+   */
+  instagramUsername: z
+    .string()
+    .trim()
+    .transform((v) => v.replace(/^@/, '').toLowerCase())
+    .refine((v) => /^[a-z0-9._]{1,30}$/.test(v), 'Un @usuario de Instagram, sin espacios.')
+    .nullable()
+    .optional(),
 })
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {

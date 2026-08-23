@@ -78,6 +78,17 @@ export async function POST(request: Request) {
     if (cuenta.workspaceId !== ws.id) {
       return jsonError('Esa cuenta es de otra empresa.', 409)
     }
+    /**
+     * Sin el @usuario real no se puede comprobar quién sigue a esa cuenta, y el
+     * imán pediría el follow para no entregar nunca el recurso. Se dice AQUÍ, al
+     * crearlo, y no dentro del cron a las tres de la mañana.
+     */
+    if (!cuenta.instagramUsername?.trim()) {
+      return jsonError(
+        `Antes hay que decir cuál es el @usuario de Instagram de "${cuenta.displayName}". Se pone en Ajustes → La empresa. Sin él no se puede comprobar quién te sigue y el recurso no se entregaría nunca.`,
+        409,
+      )
+    }
 
     const [creado] = await db
       .insert(leadMagnets)

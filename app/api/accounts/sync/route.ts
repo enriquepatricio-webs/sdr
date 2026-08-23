@@ -53,6 +53,13 @@ export async function POST(request: Request) {
             unipileAccountId: r.id,
             workspaceId: empresa?.id ?? null,
             provider: canal,
+            // Si el nombre que da Unipile ya parece un @usuario (sin espacios),
+            // se aprovecha. Si no, se deja vacío y se pide: adivinarlo hace que
+            // el imán scrapee la lista de seguidores de otra cuenta.
+            instagramUsername:
+              canal === 'instagram' && r.name && !/\s/.test(r.name)
+                ? r.name.replace(/^@/, '').toLowerCase()
+                : null,
             displayName: r.name || `${canal} ${r.id.slice(0, 6)}`,
             dailyLimit: DEFAULT_DAILY_LIMIT,
             hourlyLimit: DEFAULT_HOURLY_LIMIT[canal] ?? null,

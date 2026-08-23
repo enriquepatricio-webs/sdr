@@ -229,6 +229,19 @@ export const accounts = pgTable(
     unipileAccountId: text('unipile_account_id').notNull(),
     provider: channelEnum('provider').notNull(),
     displayName: text('display_name').notNull(),
+    /**
+     * El @usuario real de Instagram, sin arroba.
+     *
+     * NO se puede usar `displayName` para esto: es una etiqueta de interfaz que
+     * sale del nombre visible de Unipile y se puede editar a mano. Se usaba para
+     * scrapear la lista de seguidores propia, y con un nombre como "Coto
+     * Consulting" el actor devolvía cero, nadie se verificaba nunca y el sistema
+     * relanzaba el scraping de pago en cada ciclo para siempre.
+     *
+     * Se pregunta y se guarda. Si falta, el imán se para y lo dice, que es
+     * mucho mejor que funcionar en falso.
+     */
+    instagramUsername: text('instagram_username'),
     dailyLimit: integer('daily_limit').notNull().default(DEFAULT_DAILY_LIMIT),
     /** null = sin tope horario. Obligatorio en la práctica para Instagram. */
     hourlyLimit: integer('hourly_limit'),
@@ -823,7 +836,13 @@ export const leadMagnets = pgTable(
     pitchMeeting: boolean('pitch_meeting').notNull().default(true),
     active: boolean('active').notNull().default(false),
     /** Cuántas veces se ha mirado la publicación y cuándo fue la última. */
+    /**
+     * Arrendamiento del ciclo, no "última vez que se miró el post". Se mueve en
+     * CADA vuelta para que dos ciclos del mismo imán no corran a la vez.
+     */
     lastCheckedAt: timestamp('last_checked_at', { withTimezone: true }),
+    /** Cuándo se leyó por última vez la publicación buscando comentarios. */
+    comentariosLeidosAt: timestamp('comentarios_leidos_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
@@ -859,6 +878,12 @@ export const magnetContacts = pgTable(
     state: magnetStateEnum('state').notNull().default('detectado'),
     /** Cuántas veces se le ha pedido que siga. Hay un tope. */
     followAsks: integer('follow_asks').notNull().default(0),
+    /**
+     * Veces que este contacto ha reventado el ciclo. A partir de MAX_INTENTOS se
+     * descarta: un usuario irresoluble ordenado el primero por antigüedad
+     * bloqueaba el imán entero, para siempre y en silencio.
+     */
+    intentos: integer('intentos').notNull().default(0),
     verifiedAt: timestamp('verified_at', { withTimezone: true }),
     deliveredAt: timestamp('delivered_at', { withTimezone: true }),
     /** Si acabó convertido en lead del embudo normal. */

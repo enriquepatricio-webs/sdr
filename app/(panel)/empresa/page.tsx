@@ -44,6 +44,7 @@ export default async function PaginaEmpresa() {
         displayName: c.displayName,
         status: c.status,
         hourlyLimit: c.hourlyLimit,
+        instagramUsername: c.instagramUsername,
         huerfana: c.workspaceId === null,
       }))}
     />

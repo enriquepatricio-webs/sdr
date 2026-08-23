@@ -21,6 +21,8 @@ type Cuenta = {
   status: 'active' | 'paused' | 'disconnected'
   /** null = sin tope por hora. En Instagram eso es arriesgarse a un bloqueo. */
   hourlyLimit: number | null
+  /** El @usuario real. Sin él los lead magnets no pueden verificar el follow. */
+  instagramUsername: string | null
   /** Sin empresa asignada: ninguna campaña puede usarla hasta que se le ponga. */
   huerfana: boolean
 }
@@ -440,6 +442,33 @@ export function EditorEmpresa({
                               className="underline hover:text-tinta disabled:opacity-40"
                             >
                               Asignarla a esta empresa
+                            </button>
+                          </li>
+                        )}
+                        {/* Sin el @usuario real no se puede comprobar quién te
+                            sigue, y el lead magnet no entrega el recurso a
+                            nadie. No se adivina desde el nombre: se pregunta. */}
+                        {suyas.some((c) => c.provider === 'instagram' && !c.instagramUsername) && (
+                          <li className="text-xs text-aviso">
+                            Falta el @usuario de Instagram. Sin él los lead magnets no pueden
+                            comprobar quién te sigue.{' '}
+                            <button
+                              type="button"
+                              disabled={guardando}
+                              onClick={() => {
+                                const c = suyas.find(
+                                  (x) => x.provider === 'instagram' && !x.instagramUsername,
+                                )
+                                if (!c) return
+                                const v = window.prompt(
+                                  `¿Cuál es el @usuario de Instagram de "${c.displayName}"?`,
+                                  '',
+                                )
+                                if (v?.trim()) cambiarCuenta(c.id, { instagramUsername: v.trim() })
+                              }}
+                              className="underline hover:text-tinta disabled:opacity-40"
+                            >
+                              Ponerlo
                             </button>
                           </li>
                         )}
