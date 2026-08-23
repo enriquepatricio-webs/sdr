@@ -17,7 +17,7 @@ export async function GET(request: Request) {
     // podrá aprender, y decirle que ya tiene volumen contando las de otra sería
     // mentirle.
     const [resultados, muestras] = await Promise.all([
-      calcularResultados(desde),
+      calcularResultados(desde, ajustes.workspace?.id),
       obtenerMuestras(200, ajustes.workspace?.id),
     ])
 

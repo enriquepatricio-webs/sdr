@@ -17,7 +17,7 @@ import {
   puedeTransicionar,
   type EstadoIman,
 } from './magnets'
-import { MENCIONA_DINERO } from './sin-precios'
+import { MENCIONA_DINERO, sinCifrasDeDinero } from './sin-precios'
 
 /* ---- Palabra clave ------------------------------------------------------ */
 
@@ -169,4 +169,14 @@ test('los textos del imán no pueden llevar cifras de dinero', () => {
   assert.equal(MENCIONA_DINERO.test('te lo dejo en 300€'), true)
   assert.equal(MENCIONA_DINERO.test('cuesta 50 dolares'), true)
   assert.equal(MENCIONA_DINERO.test('te mando la guía por DM'), false)
+
+  // Y el saneador que quita las cifras ANTES de que el modelo las vea: el
+  // contexto sale de scrapear la web de la empresa, y las webs llevan tarifas.
+  assert.equal(sinCifrasDeDinero('desde 700€ al mes'), 'desde (importe omitido) al mes')
+  assert.equal(sinCifrasDeDinero('invierte +1.000€/mes'), 'invierte +(importe omitido)/mes')
+  assert.equal(sinCifrasDeDinero('cuesta $1,200 USD'), 'cuesta (importe omitido) USD')
+  assert.equal(sinCifrasDeDinero('unos 50 dolares'), 'unos (importe omitido)')
+  // Lo que NO es dinero se queda intacto.
+  assert.equal(sinCifrasDeDinero('20 mesas y 5 empleados'), '20 mesas y 5 empleados')
+  assert.equal(sinCifrasDeDinero('abrimos a las 16:00'), 'abrimos a las 16:00')
 })

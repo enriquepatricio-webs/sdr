@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '@/lib/db'
-import { accounts, campaigns, leads, runLogs, touches } from '@/lib/db/schema'
+import { TERMINAL_LEAD_STATUSES, accounts, campaigns, leads, runLogs, touches } from '@/lib/db/schema'
 import { jsonError, parseBody, serverError } from '@/lib/api'
 import { UnipileError, enviarEnChat, iniciarChat, invitar } from '@/lib/unipile'
 import { ajustesEfectivos } from '@/lib/workspace'
@@ -73,8 +73,24 @@ export async function POST(request: Request) {
     if (!fila) return jsonError('Ese lead no existe.', 404)
     const { lead, campana, cuenta } = fila
 
-    if (lead.status === 'revision_humana') {
-      return jsonError('Ese lead está en revisión humana. El agente no puede escribirle.', 409)
+    /**
+     * Un estado terminal significa exactamente "no se le vuelve a escribir".
+     *
+     * Antes esto solo miraba 'revision_humana' y dejaba pasar los otros cuatro.
+     * El grave es `no_interesado`: es el estado en el que aterriza quien ha
+     * pedido que le dejen en paz (la herramienta `descartar` con motivo "baja
+     * solicitada"), así que insistir dos veces bastaba para volver a escribirle.
+     * La lista sale del esquema para que añadir un estado terminal nuevo lo
+     * cubra sin tocar esto.
+     */
+    if ((TERMINAL_LEAD_STATUSES as readonly string[]).includes(lead.status)) {
+      const motivo =
+        lead.status === 'revision_humana'
+          ? 'está en revisión humana'
+          : lead.status === 'no_interesado'
+            ? 'pidió que no se le escribiera más'
+            : `está en "${lead.status}"`
+      return jsonError(`Ese lead ${motivo}. No se le puede escribir.`, 409)
     }
     if (!cuenta) return jsonError('La campaña no tiene cuenta de envío.', 409)
     if (cuenta.status !== 'active') {

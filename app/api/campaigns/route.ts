@@ -70,8 +70,19 @@ export async function POST(request: Request) {
     // El playbook se resuelve como en todas partes: el suyo si lo tiene, y si no
     // el global de fábrica. Así una campaña nueva ya sabe vender.
     const playbook = await playbookActivo(empresa.id)
+    // El ICP por defecto es el de ESTA empresa. Coger el primero de la tabla le
+    // daría a un cliente el perfil de cliente ideal de otro.
     const icpId =
-      d.icpId ?? (await db.select().from(icps).orderBy(asc(icps.createdAt)).limit(1))[0]?.id ?? null
+      d.icpId ??
+      (
+        await db
+          .select({ id: icps.id })
+          .from(icps)
+          .where(eq(icps.workspaceId, empresa.id))
+          .orderBy(asc(icps.createdAt))
+          .limit(1)
+      )[0]?.id ??
+      null
 
     const [creada] = await db
       .insert(campaigns)

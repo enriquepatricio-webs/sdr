@@ -787,6 +787,62 @@ async function main() {
     )
   })
 
+  /* ---- 14. Reserva de leads y bajas --------------------------------------- */
+  /* Los dos fallos que le escriben dos veces a un desconocido o le escriben a
+     quien pidió que le dejaran en paz. */
+
+  await ok('"no_interesado" es terminal: la puerta de salida tiene que bloquearlo', async () => {
+    assert.ok(
+      (TERMINAL_LEAD_STATUSES as readonly string[]).includes('no_interesado'),
+      'si no_interesado deja de ser terminal, /api/messages/send vuelve a escribirle a quien pidió la baja',
+    )
+    assert.ok((TERMINAL_LEAD_STATUSES as readonly string[]).includes('revision_humana'))
+  })
+
+  await ok('entregar un lead lo reserva: la segunda llamada ya no lo ve', async () => {
+    const rPg = new PGlite()
+    for (const stmt of statements) await rPg.exec(stmt)
+    await rPg.exec(`insert into sellers (id,name,context) values
+      ('dddd0000-0000-0000-0000-000000000001','E','x')`)
+    await rPg.exec(`insert into accounts (id,workspace_id,unipile_account_id,provider,display_name)
+      values ('dddd0000-0000-0000-0000-000000000002','dddd0000-0000-0000-0000-000000000001','u1','linkedin','c')`)
+    await rPg.exec(`insert into campaigns (id,name,seller_id,account_id,channel,sending_window,followup_delays)
+      values ('dddd0000-0000-0000-0000-000000000003','c','dddd0000-0000-0000-0000-000000000001',
+              'dddd0000-0000-0000-0000-000000000002','linkedin',
+              '{"tz":"Europe/Madrid","from":"09:00","to":"18:00","days":[1,2,3,4,5]}'::jsonb,'[3]'::jsonb)`)
+    for (let i = 1; i <= 3; i++) {
+      await rPg.exec(`insert into leads (campaign_id, full_name, linkedin_url, status)
+        values ('dddd0000-0000-0000-0000-000000000003','L${i}',
+                'https://www.linkedin.com/in/l${i}','nuevo')`)
+    }
+
+    const entregar = `
+      update leads set next_action_at = now() + interval '90 minutes'
+      where id in (
+        select id from leads
+        where campaign_id = 'dddd0000-0000-0000-0000-000000000003'
+          and status = 'nuevo'
+          and (next_action_at is null or next_action_at <= now())
+        order by next_action_at nulls first, created_at
+        limit 2
+        for update skip locked
+      )
+      returning id`
+
+    const primera = await rPg.query<{ id: string }>(entregar)
+    assert.equal(primera.rows.length, 2, 'la primera llamada no entregó los dos leads que tocaban')
+
+    const segunda = await rPg.query<{ id: string }>(entregar)
+    assert.equal(
+      segunda.rows.length,
+      1,
+      'la segunda llamada volvió a entregar leads ya reservados: el prospecto recibiría dos primeros toques',
+    )
+
+    const tercera = await rPg.query<{ id: string }>(entregar)
+    assert.equal(tercera.rows.length, 0, 'quedaban leads sin reservar que ya se habían entregado')
+  })
+
   /* ---- Resultado --------------------------------------------------------- */
 
   console.log(`\n${passed} comprobaciones correctas`)

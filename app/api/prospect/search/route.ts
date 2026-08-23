@@ -5,7 +5,7 @@ import { db } from '@/lib/db'
 import { icps, prospectSearches } from '@/lib/db/schema'
 import { jsonError, parseBody, serverError } from '@/lib/api'
 import { SUPPORTED_ACTORS, startRun } from '@/lib/apify'
-import { traducirIcpAFiltros } from '@/lib/prospect'
+import { construirEntrada, traducirIcpAFiltros } from '@/lib/prospect'
 import { getSettings } from '@/lib/settings'
 
 export const dynamic = 'force-dynamic'
@@ -34,7 +34,7 @@ export async function GET() {
 
 const cuerpo = z.object({
   icpId: z.string().uuid(),
-  source: z.enum(['linkedin', 'instagram']),
+  source: z.enum(['linkedin', 'instagram', 'email']),
   name: z.string().min(1),
   brief: z.string().max(2000).optional(),
   /** Tope de gasto. Lo pone la persona, nunca el modelo. */
@@ -65,10 +65,7 @@ export async function POST(request: Request) {
 
     // El tope lo añadimos nosotros después de la traducción: así el modelo no
     // puede subirlo aunque se lo pidan en el brief.
-    const input =
-      d.source === 'linkedin'
-        ? { ...filtros.input, maxItems: d.maxItems, profileScraperMode: 'Short' }
-        : { ...filtros.input, resultsType: 'details', searchLimit: d.maxItems }
+    const input = construirEntrada(d.source, filtros.input, d.maxItems)
 
     const [busqueda] = await db
       .insert(prospectSearches)
@@ -77,6 +74,7 @@ export async function POST(request: Request) {
         campaignId: d.campaignId,
         name: d.name,
         source: d.source,
+        workspaceId: icp.workspaceId,
         brief: d.brief,
         actor,
         input,

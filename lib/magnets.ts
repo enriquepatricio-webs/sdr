@@ -9,11 +9,11 @@
  * transiciones, petición de que le dejen en paz) para poder probarlo sin red ni
  * base de datos: son las tres cosas que, si fallan, le escriben a quien no toca.
  */
-import { and, count, desc, eq, gte, inArray, sql } from 'drizzle-orm'
-import { db } from './db'
-import { MENCIONA_DINERO } from './sin-precios'
-import { calcularCupo } from './quota'
-import { ajustesEfectivos } from './workspace'
+import { and, count, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { db } from "./db";
+import { MENCIONA_DINERO } from "./sin-precios";
+import { MINUTOS_QUE_RESERVA_UN_BORRADOR, calcularCupo } from "./quota";
+import { ajustesEfectivos } from "./workspace";
 import {
   accounts,
   campaigns,
@@ -24,11 +24,16 @@ import {
   leads,
   runLogs,
   touches,
-} from './db/schema'
-import { ACTORES_LECTURA, runSync } from './apify'
-import { enviarEnChat, iniciarChat, listarMensajes, obtenerUsuario } from './unipile'
+} from "./db/schema";
+import { ACTORES_LECTURA, runSync } from "./apify";
+import {
+  enviarEnChat,
+  iniciarChat,
+  listarMensajes,
+  obtenerUsuario,
+} from "./unipile";
 
-export type EstadoIman = (typeof magnetStateEnum.enumValues)[number]
+export type EstadoIman = (typeof magnetStateEnum.enumValues)[number];
 
 /* -------------------------------------------------------------------------- */
 /* Máquina de estados                                                          */
@@ -43,16 +48,19 @@ export type EstadoIman = (typeof magnetStateEnum.enumValues)[number]
  * pide que le dejen en paz no hay más pasos que dar, ni siquiera una despedida.
  */
 export const TRANSICIONES = {
-  detectado: ['pidiendo_follow', 'descartado'],
-  pidiendo_follow: ['verificado', 'descartado'],
-  verificado: ['entregado', 'descartado'],
-  entregado: ['en_conversacion', 'descartado'],
-  en_conversacion: ['descartado'],
+  detectado: ["pidiendo_follow", "descartado"],
+  pidiendo_follow: ["verificado", "descartado"],
+  verificado: ["entregado", "descartado"],
+  entregado: ["en_conversacion", "descartado"],
+  en_conversacion: ["descartado"],
   descartado: [],
-} as const satisfies Record<EstadoIman, readonly EstadoIman[]>
+} as const satisfies Record<EstadoIman, readonly EstadoIman[]>;
 
-export function puedeTransicionar(desde: EstadoIman, hasta: EstadoIman): boolean {
-  return (TRANSICIONES[desde] as readonly EstadoIman[]).includes(hasta)
+export function puedeTransicionar(
+  desde: EstadoIman,
+  hasta: EstadoIman,
+): boolean {
+  return (TRANSICIONES[desde] as readonly EstadoIman[]).includes(hasta);
 }
 
 /**
@@ -64,7 +72,7 @@ export const PASO_DE_ESTADO = {
   detectado: 1,
   verificado: 2,
   entregado: 3,
-} as const satisfies Partial<Record<EstadoIman, number>>
+} as const satisfies Partial<Record<EstadoIman, number>>;
 
 /* -------------------------------------------------------------------------- */
 /* Texto                                                                       */
@@ -72,16 +80,19 @@ export const PASO_DE_ESTADO = {
 
 /** Minúsculas y sin acentos: "GUÍA", "guia" y "Guía" son la misma palabra. */
 export function normalizar(texto: string): string {
-  return texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  return texto
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
 }
 
 /** Sin arroba, sin espacios y en minúsculas. Es la forma canónica de un usuario. */
 export function normalizarUsuario(usuario: string): string {
-  return usuario.trim().replace(/^@+/, '').trim().toLowerCase()
+  return usuario.trim().replace(/^@+/, "").trim().toLowerCase();
 }
 
 function escapar(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**
@@ -92,10 +103,12 @@ function escapar(s: string): string {
  * cuenta. Quien comenta otra cosa no ha pedido nada y no se le escribe.
  */
 export function mencionaClave(texto: string, clave: string): boolean {
-  const c = normalizar(clave).trim()
-  if (!c) return false
-  const borde = '[^\\p{L}\\p{N}]'
-  return new RegExp(`(?:^|${borde})${escapar(c)}(?:${borde}|$)`, 'u').test(normalizar(texto))
+  const c = normalizar(clave).trim();
+  if (!c) return false;
+  const borde = "[^\\p{L}\\p{N}]";
+  return new RegExp(`(?:^|${borde})${escapar(c)}(?:${borde}|$)`, "u").test(
+    normalizar(texto),
+  );
 }
 
 /**
@@ -105,10 +118,10 @@ export function mencionaClave(texto: string, clave: string): boolean {
  * más, ni una despedida: contestar a un "no me escribas" es escribirle.
  */
 const PIDE_QUE_LE_DEJEN =
-  /(no me (escrib|habl|mand|contest|molest|llam)|dej[ae]\w* en paz|dejame tranquil|no me interesa|no quiero nada|para de escribir|no insistas|es spam|denunci|unsubscribe|\bstop\b)/i
+  /(no me (escrib|habl|mand|contest|molest|llam)|dej[ae]\w* en paz|dejame tranquil|no me interesa|no quiero nada|para de escribir|no insistas|es spam|denunci|unsubscribe|\bstop\b)/i;
 
 export function pideQueLeDejen(texto: string): boolean {
-  return PIDE_QUE_LE_DEJEN.test(normalizar(texto))
+  return PIDE_QUE_LE_DEJEN.test(normalizar(texto));
 }
 
 /**
@@ -119,7 +132,7 @@ export function pideQueLeDejen(texto: string): boolean {
  * puerta. Sin cifras, por la misma razón que el resto del sistema.
  */
 export const PITCH_REUNION =
-  'Por cierto, si te viene bien, te cuento en 15 minutos cómo lo aplicamos nosotros a un caso como el tuyo. ¿Te va bien esta semana o la que viene?'
+  "Por cierto, si te viene bien, te cuento en 15 minutos cómo lo aplicamos nosotros a un caso como el tuyo. ¿Te va bien esta semana o la que viene?";
 
 /* -------------------------------------------------------------------------- */
 /* Comentarios                                                                 */
@@ -127,17 +140,17 @@ export const PITCH_REUNION =
 
 /** Lo que devuelve el actor de comentarios, quedándonos con lo que usamos. */
 type ComentarioApify = {
-  id?: string
-  text?: string
-  ownerUsername?: string
-  owner?: { id?: string; username?: string; full_name?: string }
-}
+  id?: string;
+  text?: string;
+  ownerUsername?: string;
+  owner?: { id?: string; username?: string; full_name?: string };
+};
 
 export type ComentarioClave = {
-  username: string
-  fullName: string | null
-  commentId: string | null
-}
+  username: string;
+  fullName: string | null;
+  commentId: string | null;
+};
 
 /**
  * Los comentarios que contienen la palabra, uno por persona.
@@ -151,22 +164,22 @@ export function comentariosConLaClave(
   items: ComentarioApify[],
   clave: string,
 ): ComentarioClave[] {
-  const vistos = new Set<string>()
-  const salida: ComentarioClave[] = []
+  const vistos = new Set<string>();
+  const salida: ComentarioClave[] = [];
 
   for (const c of items) {
-    const bruto = c.ownerUsername ?? c.owner?.username
-    if (!bruto || !mencionaClave(c.text ?? '', clave)) continue
-    const username = normalizarUsuario(bruto)
-    if (!username || vistos.has(username)) continue
-    vistos.add(username)
+    const bruto = c.ownerUsername ?? c.owner?.username;
+    if (!bruto || !mencionaClave(c.text ?? "", clave)) continue;
+    const username = normalizarUsuario(bruto);
+    if (!username || vistos.has(username)) continue;
+    vistos.add(username);
     salida.push({
       username,
       fullName: c.owner?.full_name?.trim() || null,
       commentId: c.id ?? null,
-    })
+    });
   }
-  return salida
+  return salida;
 }
 
 /** Lee los comentarios de la publicación y se queda con los que piden el recurso. */
@@ -179,8 +192,8 @@ export async function leerComentarios(
     ACTORES_LECTURA.comentariosInstagram,
     { directUrls: [postUrl], resultsLimit: limite },
     { maxItems: limite, timeoutSecs: 120 },
-  )
-  return comentariosConLaClave(items, clave)
+  );
+  return comentariosConLaClave(items, clave);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -188,7 +201,7 @@ export async function leerComentarios(
 /* -------------------------------------------------------------------------- */
 
 /** Cuánto vale la caché de seguidores antes de volver a scrapear. */
-export const SEGUIDORES_FRESCOS_MIN = 30
+export const SEGUIDORES_FRESCOS_MIN = 30;
 
 /**
  * Cuántos seguidores se traen en cada refresco.
@@ -197,16 +210,25 @@ export const SEGUIDORES_FRESCOS_MIN = 30
  * quien buscamos: alguien que acaba de seguir para recibir el recurso.
  * ponytail: si una cuenta grande recibe muchos seguidores por hora, subir esto.
  */
-export const SEGUIDORES_POR_REFRESCO = 500
+export const SEGUIDORES_POR_REFRESCO = 500;
 
-type SeguidorApify = { username?: string; full_name?: string }
+type SeguidorApify = { username?: string; full_name?: string };
 
 /** El nombre de usuario de Instagram de la cuenta, tal como lo dio Unipile. */
-async function usuarioDeCuenta(accountId: string): Promise<{ unipileAccountId: string; usuario: string }> {
-  const [cuenta] = await db.select().from(accounts).where(eq(accounts.id, accountId))
-  if (!cuenta) throw new Error('Esa cuenta no existe.')
-  if (cuenta.provider !== 'instagram') throw new Error('Esa cuenta no es de Instagram.')
-  return { unipileAccountId: cuenta.unipileAccountId, usuario: normalizarUsuario(cuenta.displayName) }
+async function usuarioDeCuenta(
+  accountId: string,
+): Promise<{ unipileAccountId: string; usuario: string }> {
+  const [cuenta] = await db
+    .select()
+    .from(accounts)
+    .where(eq(accounts.id, accountId));
+  if (!cuenta) throw new Error("Esa cuenta no existe.");
+  if (cuenta.provider !== "instagram")
+    throw new Error("Esa cuenta no es de Instagram.");
+  return {
+    unipileAccountId: cuenta.unipileAccountId,
+    usuario: normalizarUsuario(cuenta.displayName),
+  };
 }
 
 /**
@@ -217,20 +239,24 @@ async function usuarioDeCuenta(accountId: string): Promise<{ unipileAccountId: s
  * cada comentario, y el imán existe precisamente para tener muchos.
  */
 export async function refrescarSeguidores(accountId: string): Promise<number> {
-  const { usuario } = await usuarioDeCuenta(accountId)
+  const { usuario } = await usuarioDeCuenta(accountId);
 
   const items = await runSync<SeguidorApify>(
     ACTORES_LECTURA.seguidoresInstagram,
-    { usernames: [usuario], dataToScrape: 'followers', resultsLimit: SEGUIDORES_POR_REFRESCO },
+    {
+      usernames: [usuario],
+      dataToScrape: "followers",
+      resultsLimit: SEGUIDORES_POR_REFRESCO,
+    },
     { maxItems: SEGUIDORES_POR_REFRESCO, timeoutSecs: 240 },
-  )
+  );
 
   const filas = items
-    .map((s) => normalizarUsuario(s.username ?? ''))
+    .map((s) => normalizarUsuario(s.username ?? ""))
     .filter(Boolean)
-    .map((username) => ({ accountId, username, seenAt: new Date() }))
+    .map((username) => ({ accountId, username, seenAt: new Date() }));
 
-  if (!filas.length) return 0
+  if (!filas.length) return 0;
 
   // Solo se añade y se refresca la fecha. No se borra a quien ya no aparece: el
   // scraping viene acotado, y borrar por ausencia convertiría un lote corto en
@@ -243,20 +269,33 @@ export async function refrescarSeguidores(accountId: string): Promise<number> {
     .onConflictDoUpdate({
       target: [followers.accountId, followers.username],
       set: { seenAt: sql`excluded.seen_at` },
-    })
+    });
 
-  return filas.length
+  return filas.length;
 }
 
 /** Cuándo se refrescó por última vez la caché de esta cuenta. */
-export async function seguidoresVistosEn(accountId: string): Promise<Date | null> {
+/**
+ * Refresca la lista de seguidores como mucho una vez por ciclo, y solo si está
+ * vieja. Devuelve cuántos hay cacheados.
+ */
+export async function refrescarSiHaceFalta(accountId: string): Promise<number> {
+  const visto = await seguidoresVistosEn(accountId);
+  if (visto && Date.now() - visto.getTime() <= SEGUIDORES_FRESCOS_MIN * 60_000)
+    return -1;
+  return refrescarSeguidores(accountId);
+}
+
+export async function seguidoresVistosEn(
+  accountId: string,
+): Promise<Date | null> {
   const [fila] = await db
     .select({ seenAt: followers.seenAt })
     .from(followers)
     .where(eq(followers.accountId, accountId))
     .orderBy(desc(followers.seenAt))
-    .limit(1)
-  return fila?.seenAt ?? null
+    .limit(1);
+  return fila?.seenAt ?? null;
 }
 
 /**
@@ -265,27 +304,38 @@ export async function seguidoresVistosEn(accountId: string): Promise<Date | null
  * El refresco es de la cuenta entera, así que la primera comprobación de una
  * tanda paga el scraping y las demás salen gratis.
  */
-export async function verificarSigue(accountId: string, username: string): Promise<boolean> {
-  const visto = await seguidoresVistosEn(accountId)
-  const viejo = !visto || Date.now() - visto.getTime() > SEGUIDORES_FRESCOS_MIN * 60_000
-  if (viejo) await refrescarSeguidores(accountId)
-
+/**
+ * Solo LEE la caché. Refrescarla es cosa de `refrescarSiHaceFalta`, que corre
+ * una vez por ciclo.
+ *
+ * Antes refrescaba aquí si la caché estaba vieja, y como un scrapeo que
+ * devuelve cero no escribe nada, la caché seguía "vieja" para siempre: se
+ * relanzaba el actor de pago UNA VEZ POR CONTACTO, en cada ciclo, sin fin. Con
+ * 50 contactos cada cuarto de hora son 200 ejecuciones a la hora.
+ */
+export async function verificarSigue(
+  accountId: string,
+  username: string,
+): Promise<boolean> {
   const [fila] = await db
     .select({ username: followers.username })
     .from(followers)
     .where(
-      and(eq(followers.accountId, accountId), eq(followers.username, normalizarUsuario(username))),
-    )
-  return Boolean(fila)
+      and(
+        eq(followers.accountId, accountId),
+        eq(followers.username, normalizarUsuario(username)),
+      ),
+    );
+  return Boolean(fila);
 }
 
 /* -------------------------------------------------------------------------- */
 /* Envío                                                                       */
 /* -------------------------------------------------------------------------- */
 
-export type Iman = typeof leadMagnets.$inferSelect
-export type Contacto = typeof magnetContacts.$inferSelect
-export type Cuenta = typeof accounts.$inferSelect
+export type Iman = typeof leadMagnets.$inferSelect;
+export type Contacto = typeof magnetContacts.$inferSelect;
+export type Cuenta = typeof accounts.$inferSelect;
 
 /**
  * La campaña donde viven los leads de este imán.
@@ -308,25 +358,35 @@ export type Cuenta = typeof accounts.$inferSelect
  * la empresa a partir del campaign_id.
  */
 export async function campanaDelIman(iman: Iman): Promise<string> {
-  const nombre = `Imán: ${iman.name}`
+  const nombre = `Imán: ${iman.name}`;
   const [existente] = await db
     .select({ id: campaigns.id })
     .from(campaigns)
-    .where(and(eq(campaigns.workspaceId, iman.workspaceId), eq(campaigns.name, nombre)))
-  if (existente) return existente.id
+    .where(
+      and(
+        eq(campaigns.workspaceId, iman.workspaceId),
+        eq(campaigns.name, nombre),
+      ),
+    );
+  if (existente) return existente.id;
 
   const [nueva] = await db
     .insert(campaigns)
     .values({
       name: nombre,
-      status: 'draft',
+      status: "draft",
       workspaceId: iman.workspaceId,
       accountId: iman.accountId,
-      channel: 'instagram',
-      sendingWindow: { tz: 'Europe/Madrid', from: '09:00', to: '21:00', days: [1, 2, 3, 4, 5, 6, 7] },
+      channel: "instagram",
+      sendingWindow: {
+        tz: "Europe/Madrid",
+        from: "09:00",
+        to: "21:00",
+        days: [1, 2, 3, 4, 5, 6, 7],
+      },
     })
-    .returning({ id: campaigns.id })
-  return nueva.id
+    .returning({ id: campaigns.id });
+  return nueva.id;
 }
 
 /**
@@ -342,15 +402,18 @@ export async function asegurarLead(
   cuenta: Cuenta,
 ): Promise<{ leadId: string; providerId: string } | null> {
   if (contacto.leadId && contacto.providerId) {
-    return { leadId: contacto.leadId, providerId: contacto.providerId }
+    return { leadId: contacto.leadId, providerId: contacto.providerId };
   }
 
-  const perfil = await obtenerUsuario(cuenta.unipileAccountId, contacto.username)
-  const providerId = perfil.provider_id ?? perfil.id ?? null
-  if (!providerId) return null
+  const perfil = await obtenerUsuario(
+    cuenta.unipileAccountId,
+    contacto.username,
+  );
+  const providerId = perfil.provider_id ?? perfil.id ?? null;
+  if (!providerId) return null;
 
-  const campaignId = await campanaDelIman(iman)
-  const nombre = contacto.fullName || perfil.name || contacto.username
+  const campaignId = await campanaDelIman(iman);
+  const nombre = contacto.fullName || perfil.name || contacto.username;
 
   const [creado] = await db
     .insert(leads)
@@ -359,12 +422,12 @@ export async function asegurarLead(
       fullName: nombre,
       instagramUsername: contacto.username,
       providerId,
-      status: 'nuevo',
+      status: "nuevo",
     })
     // El índice único por (campaña, usuario normalizado) es el que impide que
     // dos ejecuciones creen dos leads para la misma persona.
     .onConflictDoNothing()
-    .returning({ id: leads.id })
+    .returning({ id: leads.id });
 
   const leadId =
     creado?.id ??
@@ -372,17 +435,22 @@ export async function asegurarLead(
       await db
         .select({ id: leads.id })
         .from(leads)
-        .where(and(eq(leads.campaignId, campaignId), eq(leads.instagramUsername, contacto.username)))
-    )[0]?.id
+        .where(
+          and(
+            eq(leads.campaignId, campaignId),
+            eq(leads.instagramUsername, contacto.username),
+          ),
+        )
+    )[0]?.id;
 
-  if (!leadId) return null
+  if (!leadId) return null;
 
   await db
     .update(magnetContacts)
     .set({ leadId, providerId })
-    .where(eq(magnetContacts.id, contacto.id))
+    .where(eq(magnetContacts.id, contacto.id));
 
-  return { leadId, providerId }
+  return { leadId, providerId };
 }
 
 /**
@@ -395,21 +463,30 @@ export async function asegurarLead(
 export async function toqueDelPaso(
   leadId: string,
   paso: number,
-): Promise<{ status: 'borrador' | 'enviado' | 'fallido'; unipileChatId: string | null } | null> {
+): Promise<{
+  status: "borrador" | "enviado" | "fallido";
+  unipileChatId: string | null;
+} | null> {
   const [fila] = await db
     .select({ status: touches.status, unipileChatId: touches.unipileChatId })
     .from(touches)
-    .where(and(eq(touches.leadId, leadId), eq(touches.step, paso), eq(touches.direction, 'out')))
+    .where(
+      and(
+        eq(touches.leadId, leadId),
+        eq(touches.step, paso),
+        eq(touches.direction, "out"),
+      ),
+    )
     .orderBy(desc(touches.createdAt))
-    .limit(1)
-  return fila ?? null
+    .limit(1);
+  return fila ?? null;
 }
 
 export type ResultadoEnvio = {
-  enviado: boolean
-  motivo?: 'menciona_dinero' | 'autopiloto_apagado' | 'fallo'
-  chatId?: string | null
-}
+  enviado: boolean;
+  motivo?: "menciona_dinero" | "autopiloto_apagado" | "fallo";
+  chatId?: string | null;
+};
 
 /**
  * Manda un DM replicando la secuencia de `app/api/messages/send/route.ts`:
@@ -420,25 +497,25 @@ export type ResultadoEnvio = {
  * delante. Lo que no se puede cambiar es el orden, y el orden es este.
  */
 export async function enviarDm(opciones: {
-  leadId: string
-  cuenta: Cuenta
-  providerId: string
-  chatId: string | null
-  texto: string
-  paso: number
-  autopilot: boolean
+  leadId: string;
+  cuenta: Cuenta;
+  providerId: string;
+  chatId: string | null;
+  texto: string;
+  paso: number;
+  autopilot: boolean;
 }): Promise<ResultadoEnvio> {
-  const { leadId, cuenta, texto, paso } = opciones
+  const { leadId, cuenta, texto, paso } = opciones;
 
   if (MENCIONA_DINERO.test(texto)) {
     await db.insert(runLogs).values({
-      workflow: 'iman',
+      workflow: "iman",
       leadId,
-      level: 'warn',
-      message: 'Mensaje del imán bloqueado: mencionaba dinero.',
+      level: "warn",
+      message: "Mensaje del imán bloqueado: mencionaba dinero.",
       payload: { texto },
-    })
-    return { enviado: false, motivo: 'menciona_dinero' }
+    });
+    return { enviado: false, motivo: "menciona_dinero" };
   }
 
   // ---- 1. Registrar ANTES de enviar ---------------------------------------
@@ -447,67 +524,76 @@ export async function enviarDm(opciones: {
     .values({
       leadId,
       accountId: cuenta.id,
-      channel: 'instagram',
-      direction: 'out',
-      status: 'borrador',
+      channel: "instagram",
+      direction: "out",
+      status: "borrador",
       body: texto,
       unipileChatId: opciones.chatId,
       step: paso,
     })
-    .returning({ id: touches.id })
+    .returning({ id: touches.id });
 
   // ---- Autopiloto apagado: aquí se para -----------------------------------
   if (!opciones.autopilot) {
     await db.insert(runLogs).values({
-      workflow: 'iman',
+      workflow: "iman",
       leadId,
-      level: 'info',
-      message: 'Borrador del imán guardado. El autopiloto está apagado, no se ha enviado nada.',
+      level: "info",
+      message:
+        "Borrador del imán guardado. El autopiloto está apagado, no se ha enviado nada.",
       payload: { touchId: toque.id, paso },
-    })
-    return { enviado: false, motivo: 'autopiloto_apagado' }
+    });
+    return { enviado: false, motivo: "autopiloto_apagado" };
   }
 
   // ---- 2. Enviar -----------------------------------------------------------
   try {
-    let chatId = opciones.chatId
-    let messageId: string
+    let chatId = opciones.chatId;
+    let messageId: string;
     if (chatId) {
-      messageId = (await enviarEnChat(chatId, texto)).message_id
+      messageId = (await enviarEnChat(chatId, texto)).message_id;
     } else {
       const r = await iniciarChat({
         accountId: cuenta.unipileAccountId,
         attendeeId: opciones.providerId,
         texto,
-      })
-      messageId = r.message_id
-      chatId = r.chat_id
+      });
+      messageId = r.message_id;
+      chatId = r.chat_id;
     }
 
     // ---- 3. Confirmar ------------------------------------------------------
     await db
       .update(touches)
-      .set({ status: 'enviado', sentAt: new Date(), unipileMessageId: messageId, unipileChatId: chatId })
-      .where(eq(touches.id, toque.id))
+      .set({
+        status: "enviado",
+        sentAt: new Date(),
+        unipileMessageId: messageId,
+        unipileChatId: chatId,
+      })
+      .where(eq(touches.id, toque.id));
 
     await db
       .update(leads)
-      .set({ status: 'contactado', touchCount: sql`${leads.touchCount} + 1` })
-      .where(eq(leads.id, leadId))
+      .set({ status: "contactado", touchCount: sql`${leads.touchCount} + 1` })
+      .where(eq(leads.id, leadId));
 
-    return { enviado: true, chatId }
+    return { enviado: true, chatId };
   } catch (err) {
     // Queda en 'fallido' y nadie lo reintenta: el envío pudo salir y haber
     // fallado solo la respuesta, y reintentar duplicaría el mensaje.
-    await db.update(touches).set({ status: 'fallido' }).where(eq(touches.id, toque.id))
+    await db
+      .update(touches)
+      .set({ status: "fallido" })
+      .where(eq(touches.id, toque.id));
     await db.insert(runLogs).values({
-      workflow: 'iman',
+      workflow: "iman",
       leadId,
-      level: 'error',
+      level: "error",
       message: `Falló el DM del imán: ${err instanceof Error ? err.message : String(err)}`,
       payload: { touchId: toque.id, noSeReintenta: true },
-    })
-    return { enviado: false, motivo: 'fallo' }
+    });
+    return { enviado: false, motivo: "fallo" };
   }
 }
 
@@ -522,27 +608,38 @@ export async function enviarDm(opciones: {
  * horarias y son más restrictivas justo donde importa, porque no dejan una
  * ráfaga a las 23:59 y otra a las 00:01.
  */
-export async function enviosRecientes(accountId: string): Promise<{ dia: number; hora: number }> {
-  const ahora = Date.now()
-  const desdeDia = new Date(ahora - 24 * 60 * 60_000)
-  const desdeHora = new Date(ahora - 60 * 60_000)
+export async function enviosRecientes(
+  accountId: string,
+): Promise<{ dia: number; hora: number }> {
+  const ahora = Date.now();
+  const desdeDia = new Date(ahora - 24 * 60 * 60_000);
+  const desdeHora = new Date(ahora - 60 * 60_000);
+
+  const desdeReserva = new Date(
+    ahora - MINUTOS_QUE_RESERVA_UN_BORRADOR * 60_000,
+  );
+
+  // Un borrador recién escrito cuenta como enviado: es la reserva que impide
+  // que la campaña en frío y el imán se gasten el mismo hueco a la vez.
+  const reservado = sql`(${touches.status} = 'borrador' and ${touches.createdAt} >= ${desdeReserva})`;
+  const enviadoDia = sql`(${touches.status} = 'enviado' and ${touches.sentAt} >= ${desdeDia})`;
+  const enviadoHora = sql`(${touches.status} = 'enviado' and ${touches.sentAt} >= ${desdeHora})`;
 
   const [fila] = await db
     .select({
-      dia: count(),
-      hora: sql<number>`count(*) filter (where ${touches.sentAt} >= ${desdeHora})::int`,
+      dia: sql<number>`count(*)::int`,
+      hora: sql<number>`count(*) filter (where ${enviadoHora} or ${reservado})::int`,
     })
     .from(touches)
     .where(
       and(
         eq(touches.accountId, accountId),
-        eq(touches.direction, 'out'),
-        eq(touches.status, 'enviado'),
-        gte(touches.sentAt, desdeDia),
+        eq(touches.direction, "out"),
+        sql`(${enviadoDia} or ${reservado})`,
       ),
-    )
+    );
 
-  return { dia: Number(fila?.dia ?? 0), hora: Number(fila?.hora ?? 0) }
+  return { dia: Number(fila?.dia ?? 0), hora: Number(fila?.hora ?? 0) };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -557,8 +654,8 @@ export async function enviosRecientes(accountId: string): Promise<{ dia: number;
  * conectado, y cuesta una llamada por contacto al que se iba a escribir.
  */
 export async function pidioQueLeDejen(chatId: string): Promise<boolean> {
-  const { items } = await listarMensajes(chatId, 20)
-  return items.some((m) => !m.is_sender && m.text && pideQueLeDejen(m.text))
+  const { items } = await listarMensajes(chatId, 20);
+  return items.some((m) => !m.is_sender && m.text && pideQueLeDejen(m.text));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -575,7 +672,7 @@ export async function registrarComentarios(
   magnetId: string,
   comentarios: ComentarioClave[],
 ): Promise<number> {
-  if (!comentarios.length) return 0
+  if (!comentarios.length) return 0;
   const creados = await db
     .insert(magnetContacts)
     .values(
@@ -587,8 +684,8 @@ export async function registrarComentarios(
       })),
     )
     .onConflictDoNothing()
-    .returning({ id: magnetContacts.id })
-  return creados.length
+    .returning({ id: magnetContacts.id });
+  return creados.length;
 }
 
 /** Cambia el estado solo si la transición es legal y nadie se ha adelantado. */
@@ -597,28 +694,41 @@ export async function moverA(
   hasta: EstadoIman,
   extra: Partial<typeof magnetContacts.$inferInsert> = {},
 ): Promise<boolean> {
-  if (!puedeTransicionar(contacto.state, hasta)) return false
+  if (!puedeTransicionar(contacto.state, hasta)) return false;
   const filas = await db
     .update(magnetContacts)
     .set({ state: hasta, ...extra })
-    .where(and(eq(magnetContacts.id, contacto.id), eq(magnetContacts.state, contacto.state)))
-    .returning({ id: magnetContacts.id })
-  return filas.length > 0
+    .where(
+      and(
+        eq(magnetContacts.id, contacto.id),
+        eq(magnetContacts.state, contacto.state),
+      ),
+    )
+    .returning({ id: magnetContacts.id });
+  return filas.length > 0;
 }
 
 /** Los contactos que todavía tienen algo pendiente, los más antiguos primero. */
-export async function contactosPendientes(magnetId: string, limite: number): Promise<Contacto[]> {
+export async function contactosPendientes(
+  magnetId: string,
+  limite: number,
+): Promise<Contacto[]> {
   return db
     .select()
     .from(magnetContacts)
     .where(
       and(
         eq(magnetContacts.magnetId, magnetId),
-        inArray(magnetContacts.state, ['detectado', 'pidiendo_follow', 'verificado', 'entregado']),
+        inArray(magnetContacts.state, [
+          "detectado",
+          "pidiendo_follow",
+          "verificado",
+          "entregado",
+        ]),
       ),
     )
     .orderBy(magnetContacts.createdAt)
-    .limit(limite)
+    .limit(limite);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -626,19 +736,19 @@ export async function contactosPendientes(magnetId: string, limite: number): Pro
 /* -------------------------------------------------------------------------- */
 
 /** Cuántos contactos se miran por ciclo. El cupo horario recorta muy por debajo. */
-const LOTE = 50
+const LOTE = 50;
 
 export type ResumenCiclo = {
-  comentariosConLaClave: number
-  contactosNuevos: number
-  peticionesDeFollow: number
-  verificados: number
-  entregados: number
-  enConversacion: number
-  descartados: number
-  borradores: number
-  sinCupo: { motivo: string; detalle?: string } | null
-}
+  comentariosConLaClave: number;
+  contactosNuevos: number;
+  peticionesDeFollow: number;
+  verificados: number;
+  entregados: number;
+  enConversacion: number;
+  descartados: number;
+  borradores: number;
+  sinCupo: { motivo: string; detalle?: string } | null;
+};
 
 /**
  * Un ciclo del imán: leer comentarios nuevos y hacer avanzar un paso a quien
@@ -656,19 +766,70 @@ export type ResumenCiclo = {
  * mismo imán. Si algún día se lanza desde dos sitios a la vez hace falta un
  * bloqueo por imán (un `select ... for update` sobre la fila del imán basta).
  */
-export async function ejecutarCiclo(iman: Iman, cuenta: Cuenta): Promise<ResumenCiclo> {
-  const ajustes = await ajustesEfectivos(iman.workspaceId)
-
-  /* ---- 1. Comentarios nuevos ------------------------------------------ */
-  const comentarios = await leerComentarios(iman.postUrl, iman.keyword)
-  const nuevos = await registrarComentarios(iman.id, comentarios)
-  await db
+export async function ejecutarCiclo(
+  iman: Iman,
+  cuenta: Cuenta,
+): Promise<ResumenCiclo> {
+  /**
+   * Un solo ciclo a la vez por imán.
+   *
+   * Llamadas SEGUIDAS ya eran seguras, pero dos ciclos EN PARALELO no: el botón
+   * del panel y el cron de cada cuarto de hora pueden coincidir, y entre el
+   * `toqueDelPaso` que comprueba y el `enviarDm` que escribe hay una ventana en
+   * la que los dos creen que el paso sigue pendiente. El resultado es el mismo
+   * DM dos veces a la misma persona.
+   *
+   * `last_checked_at` hace de arrendamiento: solo entra quien consigue moverlo,
+   * y como el UPDATE es condicional esa carrera la gana uno solo. Si el ciclo se
+   * cae a mitad, el arrendamiento caduca en cinco minutos.
+   */
+  const [turno] = await db
     .update(leadMagnets)
     .set({ lastCheckedAt: new Date() })
-    .where(eq(leadMagnets.id, iman.id))
+    .where(
+      and(
+        eq(leadMagnets.id, iman.id),
+        sql`(${leadMagnets.lastCheckedAt} is null or ${leadMagnets.lastCheckedAt} < now() - interval '5 minutes')`,
+      ),
+    )
+    .returning({ id: leadMagnets.id });
+
+  if (!turno) {
+    return {
+      comentariosConLaClave: 0,
+      contactosNuevos: 0,
+      peticionesDeFollow: 0,
+      verificados: 0,
+      entregados: 0,
+      enConversacion: 0,
+      descartados: 0,
+      borradores: 0,
+      sinCupo: {
+        motivo: "ya_en_marcha",
+        detalle: "Otro ciclo de este imán sigue corriendo.",
+      },
+    };
+  }
+
+  const ajustes = await ajustesEfectivos(iman.workspaceId);
+
+  /* ---- 1. Comentarios nuevos ------------------------------------------ */
+  const comentarios = await leerComentarios(iman.postUrl, iman.keyword);
+  const nuevos = await registrarComentarios(iman.id, comentarios);
+
+  /* ---- 1 bis. La lista de seguidores, UNA vez por ciclo ---------------- */
+  const cacheados = await refrescarSiHaceFalta(cuenta.id);
+  if (cacheados === 0) {
+    await db.insert(runLogs).values({
+      workflow: "iman",
+      level: "warn",
+      message: `No se pudo leer la lista de seguidores de "${cuenta.displayName}". Nadie pasará de "pidiendo_follow" hasta que se lea.`,
+      payload: { magnetId: iman.id, accountId: cuenta.id },
+    });
+  }
 
   /* ---- 2. Cuánto se puede escribir ------------------------------------ */
-  const enviados = await enviosRecientes(cuenta.id)
+  const enviados = await enviosRecientes(cuenta.id);
   const cupo = calcularCupo({
     topeDiarioCuenta: cuenta.dailyLimit,
     // Un imán no tiene tope propio: el de la cuenta es el que manda, y en
@@ -679,9 +840,9 @@ export async function ejecutarCiclo(iman: Iman, cuenta: Cuenta): Promise<Resumen
     enviadosHoyCampana: enviados.dia,
     enviadosEstaHoraCuenta: enviados.hora,
     lote: LOTE,
-  })
+  });
 
-  let presupuesto = cupo.hay ? cupo.cuantos : 0
+  let presupuesto = cupo.hay ? cupo.cuantos : 0;
   const resumen = {
     comentariosConLaClave: comentarios.length,
     contactosNuevos: nuevos,
@@ -692,61 +853,65 @@ export async function ejecutarCiclo(iman: Iman, cuenta: Cuenta): Promise<Resumen
     descartados: 0,
     borradores: 0,
     sinCupo: cupo.hay ? null : { motivo: cupo.motivo, detalle: cupo.detalle },
-  }
+  };
 
   /* ---- 3. Avanzar a cada uno un paso ---------------------------------- */
   for (const contacto of await contactosPendientes(iman.id, LOTE)) {
     // Pasar de `pidiendo_follow` a `verificado` no manda nada, así que se hace
     // aunque no quede cupo: es lo que deja la cola lista para la hora siguiente.
-    if (contacto.state === 'pidiendo_follow') {
+    if (contacto.state === "pidiendo_follow") {
       if (await verificarSigue(cuenta.id, contacto.username)) {
-        if (await moverA(contacto, 'verificado', { verifiedAt: new Date() })) resumen.verificados++
+        if (await moverA(contacto, "verificado", { verifiedAt: new Date() }))
+          resumen.verificados++;
       }
-      continue
+      continue;
     }
 
-    if (presupuesto <= 0) continue
-    if (contacto.state === 'entregado' && !iman.pitchMeeting) continue
+    if (presupuesto <= 0) continue;
+    if (contacto.state === "entregado" && !iman.pitchMeeting) continue;
 
     // Si en algún momento pidió que le dejaran en paz, se para aquí y no
     // recibe nada más, ni una despedida.
-    if (contacto.unipileChatId && (await pidioQueLeDejen(contacto.unipileChatId))) {
-      if (await moverA(contacto, 'descartado')) resumen.descartados++
-      continue
+    if (
+      contacto.unipileChatId &&
+      (await pidioQueLeDejen(contacto.unipileChatId))
+    ) {
+      if (await moverA(contacto, "descartado")) resumen.descartados++;
+      continue;
     }
 
-    const identidad = await asegurarLead(iman, contacto, cuenta)
+    const identidad = await asegurarLead(iman, contacto, cuenta);
     if (!identidad) {
       await db.insert(runLogs).values({
-        workflow: 'iman',
-        level: 'warn',
+        workflow: "iman",
+        level: "warn",
         message: `No se pudo resolver @${contacto.username} en Instagram. Se queda en "${contacto.state}".`,
         payload: { magnetId: iman.id, contactId: contacto.id },
-      })
-      continue
+      });
+      continue;
     }
 
-    const paso = PASO_DE_ESTADO[contacto.state as keyof typeof PASO_DE_ESTADO]
-    const yaHecho = await toqueDelPaso(identidad.leadId, paso)
+    const paso = PASO_DE_ESTADO[contacto.state as keyof typeof PASO_DE_ESTADO];
+    const yaHecho = await toqueDelPaso(identidad.leadId, paso);
 
     // Un borrador sin aprobar (autopiloto apagado) o un envío que falló se
     // quedan como están: repetir cualquiera de los dos duplicaría el mensaje.
-    if (yaHecho && yaHecho.status !== 'enviado') continue
+    if (yaHecho && yaHecho.status !== "enviado") continue;
 
-    let envio: { enviado: boolean; motivo?: string; chatId?: string | null }
+    let envio: { enviado: boolean; motivo?: string; chatId?: string | null };
     if (yaHecho) {
       // El mensaje salió (lo aprobó una persona en la bandeja de borradores).
       // El paso está hecho aunque no lo enviara este ciclo, así que avanza.
-      envio = { enviado: true, chatId: yaHecho.unipileChatId }
+      envio = { enviado: true, chatId: yaHecho.unipileChatId };
     } else {
       const texto =
-        contacto.state === 'detectado'
+        contacto.state === "detectado"
           ? iman.followMessage
-          : contacto.state === 'verificado'
+          : contacto.state === "verificado"
             ? iman.resource
-            : PITCH_REUNION
+            : PITCH_REUNION;
 
-      presupuesto--
+      presupuesto--;
       envio = await enviarDm({
         leadId: identidad.leadId,
         cuenta,
@@ -755,33 +920,43 @@ export async function ejecutarCiclo(iman: Iman, cuenta: Cuenta): Promise<Resumen
         texto,
         paso,
         autopilot: ajustes.autopilot,
-      })
+      });
     }
 
     if (!envio.enviado) {
-      if (envio.motivo === 'autopiloto_apagado') resumen.borradores++
-      continue
+      if (envio.motivo === "autopiloto_apagado") resumen.borradores++;
+      continue;
     }
 
-    const chat = { unipileChatId: envio.chatId ?? contacto.unipileChatId }
-    if (contacto.state === 'detectado') {
-      if (await moverA(contacto, 'pidiendo_follow', { ...chat, followAsks: contacto.followAsks + 1 })) {
-        resumen.peticionesDeFollow++
+    const chat = { unipileChatId: envio.chatId ?? contacto.unipileChatId };
+    if (contacto.state === "detectado") {
+      if (
+        await moverA(contacto, "pidiendo_follow", {
+          ...chat,
+          followAsks: contacto.followAsks + 1,
+        })
+      ) {
+        resumen.peticionesDeFollow++;
       }
-    } else if (contacto.state === 'verificado') {
-      if (await moverA(contacto, 'entregado', { ...chat, deliveredAt: new Date() })) {
-        resumen.entregados++
+    } else if (contacto.state === "verificado") {
+      if (
+        await moverA(contacto, "entregado", {
+          ...chat,
+          deliveredAt: new Date(),
+        })
+      ) {
+        resumen.entregados++;
       }
-    } else if (await moverA(contacto, 'en_conversacion', chat)) {
-      resumen.enConversacion++
+    } else if (await moverA(contacto, "en_conversacion", chat)) {
+      resumen.enConversacion++;
     }
   }
 
   await db.insert(runLogs).values({
-    workflow: 'iman',
-    level: 'info',
+    workflow: "iman",
+    level: "info",
     message: `Ciclo del imán "${iman.name}": ${resumen.contactosNuevos} nuevos, ${resumen.entregados} entregados.`,
     payload: { magnetId: iman.id, ...resumen },
-  })
-  return resumen
+  });
+  return resumen;
 }

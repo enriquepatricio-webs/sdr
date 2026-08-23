@@ -14,6 +14,7 @@ import type {
   Objection,
   QualificationCriterion,
 } from './db/schema'
+import { sinCifrasDeDinero } from './sin-precios'
 
 export type PlaybookParaPrompt = {
   systemPrompt: string
@@ -114,7 +115,7 @@ export function construirSystemPrompt(
         v.context ?? '',
         // Lo scrapeado va después de lo escrito a mano y marcado como tal: si se
         // contradicen, manda lo que puso la persona.
-        v.scrapedContext ? `\nDe su web:\n${v.scrapedContext}` : '',
+        v.scrapedContext ? `\nDe su web:\n${sinCifrasDeDinero(v.scrapedContext)}` : '',
       ]
         .filter(Boolean)
         .join('\n')
@@ -139,7 +140,7 @@ export function construirSystemPrompt(
   return [
     base.trim(),
     seccion('Quiénes somos', quienesSomos),
-    seccion('Qué vendemos', v?.offer || playbook.offer),
+    seccion('Qué vendemos', sinCifrasDeDinero(v?.offer || playbook.offer)),
     seccion(`A quién buscamos: ${icp?.name ?? 'sin ICP definido'}`, icpTexto),
     seccion(
       'Qué tienes que averiguar (máximo 2 preguntas en toda la conversación)',

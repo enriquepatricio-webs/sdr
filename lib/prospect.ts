@@ -10,16 +10,16 @@
  * Nada de esto escribe en `leads`: los candidatos se quedan en `prospects`
  * hasta que una persona decide a quién importar.
  */
-import type { IcpSignal } from './db/schema'
-import { type ProspectSource, SUPPORTED_ACTORS } from './apify'
-import { type Usage, chatJson } from './openrouter'
+import type { IcpSignal } from "./db/schema";
+import { type ProspectSource, SUPPORTED_ACTORS } from "./apify";
+import { type Usage, chatJson } from "./openrouter";
 
 export type IcpParaProspeccion = {
-  name: string
-  description: string | null
-  criteria: IcpSignal[]
-  disqualifiers: IcpSignal[]
-}
+  name: string;
+  description: string | null;
+  criteria: IcpSignal[];
+  disqualifiers: IcpSignal[];
+};
 
 /* -------------------------------------------------------------------------- */
 /* 1. ICP -> filtros del actor                                                 */
@@ -33,101 +33,186 @@ export type IcpParaProspeccion = {
  * usuario, no el modelo) ni nada de MongoDB.
  */
 const SCHEMA_LINKEDIN = {
-  type: 'object',
+  type: "object",
   additionalProperties: false,
   properties: {
     searchQuery: {
-      type: 'string',
-      description: 'Búsqueda difusa en castellano o inglés. Ej: "fundador consultoría B2B".',
+      type: "string",
+      description:
+        'Búsqueda difusa en castellano o inglés. Ej: "fundador consultoría B2B".',
     },
     currentJobTitles: {
-      type: 'array',
-      items: { type: 'string' },
+      type: "array",
+      items: { type: "string" },
       description: 'Cargos actuales exactos. Ej: ["Founder","CEO","Socio"].',
     },
     locations: {
-      type: 'array',
-      items: { type: 'string' },
+      type: "array",
+      items: { type: "string" },
       description:
         'Ubicaciones tal y como las entiende LinkedIn. Usa el nombre completo del país: "Spain", no "ES".',
     },
     companyHeadcount: {
-      type: 'array',
-      items: { type: 'string', enum: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'] },
-      description:
-        'Tamaño de empresa: A=autónomo, B=1-10, C=11-50, D=51-200, E=201-500, F=501-1000, G=1001-5000, H=5001-10000, I=10001+.',
-    },
-    seniorityLevelIds: {
-      type: 'array',
+      type: "array",
       items: {
-        type: 'string',
-        enum: ['100', '110', '120', '130', '200', '210', '220', '300', '310', '320'],
+        type: "string",
+        enum: ["A", "B", "C", "D", "E", "F", "G", "H", "I"],
       },
       description:
-        'Seniority: 120=Senior, 220=Director, 300=VP, 310=CXO, 320=Owner/Partner. Para decisores usa 310 y 320.',
+        "Tamaño de empresa: A=autónomo, B=1-10, C=11-50, D=51-200, E=201-500, F=501-1000, G=1001-5000, H=5001-10000, I=10001+.",
+    },
+    seniorityLevelIds: {
+      type: "array",
+      items: {
+        type: "string",
+        enum: [
+          "100",
+          "110",
+          "120",
+          "130",
+          "200",
+          "210",
+          "220",
+          "300",
+          "310",
+          "320",
+        ],
+      },
+      description:
+        "Seniority: 120=Senior, 220=Director, 300=VP, 310=CXO, 320=Owner/Partner. Para decisores usa 310 y 320.",
     },
     excludeCurrentJobTitles: {
-      type: 'array',
-      items: { type: 'string' },
-      description: 'Cargos que descartan. Sale de los descalificadores del ICP.',
+      type: "array",
+      items: { type: "string" },
+      description:
+        "Cargos que descartan. Sale de los descalificadores del ICP.",
     },
     profileLanguages: {
-      type: 'array',
-      items: { type: 'string', enum: ['Spanish', 'English', 'Portuguese', 'French', 'Italian'] },
-      description: 'Idioma del perfil.',
+      type: "array",
+      items: {
+        type: "string",
+        enum: ["Spanish", "English", "Portuguese", "French", "Italian"],
+      },
+      description: "Idioma del perfil.",
     },
     razonamiento: {
-      type: 'string',
+      type: "string",
       description:
-        'Por qué estos filtros y no otros, en dos frases. Es lo que se lee cuando la búsqueda sale mal.',
+        "Por qué estos filtros y no otros, en dos frases. Es lo que se lee cuando la búsqueda sale mal.",
     },
     angulo: {
-      type: 'string',
+      type: "string",
       description:
         'Etiqueta corta de este ángulo de búsqueda, máximo ocho palabras. Ej: "consultoras de RRHH en Valencia".',
     },
   },
-  required: ['searchQuery', 'razonamiento', 'angulo'],
-} as const
+  required: ["searchQuery", "razonamiento", "angulo"],
+} as const;
 
 const SCHEMA_INSTAGRAM = {
-  type: 'object',
+  type: "object",
   additionalProperties: false,
   properties: {
     search: {
-      type: 'string',
-      description: 'Término de búsqueda o hashtag sin almohadilla. Ej: "consultoria b2b".',
+      type: "string",
+      description:
+        'Término de búsqueda o hashtag sin almohadilla. Ej: "consultoria b2b".',
     },
     searchType: {
-      type: 'string',
-      enum: ['user', 'hashtag'],
-      description: 'user busca perfiles por nombre; hashtag busca quién publica bajo ese hashtag.',
+      type: "string",
+      enum: ["user", "hashtag"],
+      description:
+        "user busca perfiles por nombre; hashtag busca quién publica bajo ese hashtag.",
     },
-    razonamiento: { type: 'string', description: 'Por qué ese término, en dos frases.' },
-    angulo: { type: 'string', description: 'Etiqueta corta del ángulo, máximo ocho palabras.' },
+    razonamiento: {
+      type: "string",
+      description: "Por qué ese término, en dos frases.",
+    },
+    angulo: {
+      type: "string",
+      description: "Etiqueta corta del ángulo, máximo ocho palabras.",
+    },
   },
-  required: ['search', 'searchType', 'razonamiento', 'angulo'],
-} as const
+  required: ["search", "searchType", "razonamiento", "angulo"],
+} as const;
+
+/**
+ * Google Maps. Deliberadamente pequeño.
+ *
+ * NO se expone `categoryFilterWords`: son más de 4.000 categorías cerradas, el
+ * modelo se inventa las que no existen y el propio actor avisa de que filtrar
+ * por categoría produce falsos negativos porque muchos negocios se categorizan
+ * mal. Se filtra por término de búsqueda, que es como busca una persona.
+ *
+ * `locationQuery` va de a UNA ubicación por ejecución: es limitación del actor.
+ * Cambiar de ciudad es, de hecho, el mejor ángulo nuevo para reabastecer.
+ */
+const SCHEMA_MAPS = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    searchStringsArray: {
+      type: "array",
+      items: { type: "string" },
+      description:
+        'Lo que escribirías en la barra de Google Maps, en el idioma del país. Ej: ["restaurante","cafetería"]. Entre dos y cuatro términos.',
+    },
+    locationQuery: {
+      type: "string",
+      description:
+        'UNA sola ubicación en texto libre. Cuanto más simple mejor: "Bilbao, España" antes que "Bilbao, Vizcaya, País Vasco, España". Puede ser una provincia o un país entero.',
+    },
+    placeMinimumStars: {
+      type: "string",
+      enum: [
+        "two",
+        "twoAndHalf",
+        "three",
+        "threeAndHalf",
+        "four",
+        "fourAndHalf",
+      ],
+      description:
+        "Nota mínima. Úsalo solo si el ICP habla de calidad o de negocio consolidado: filtrar por estrellas deja fuera a los que no tienen reseñas todavía.",
+    },
+    razonamiento: {
+      type: "string",
+      description: "Por qué esos términos y esa zona, en dos frases.",
+    },
+    angulo: {
+      type: "string",
+      description:
+        'Etiqueta corta del ángulo, máximo ocho palabras. Ej: "cafeterías de especialidad en Sevilla".',
+    },
+  },
+  required: ["searchStringsArray", "locationQuery", "razonamiento", "angulo"],
+} as const;
+
+const SCHEMAS = {
+  linkedin: SCHEMA_LINKEDIN,
+  instagram: SCHEMA_INSTAGRAM,
+  email: SCHEMA_MAPS,
+} as const satisfies Record<ProspectSource, unknown>;
 
 function describirIcp(icp: IcpParaProspeccion): string {
   return [
     `ICP: ${icp.name}`,
-    icp.description ?? '',
-    '',
-    'ENCAJA quien cumple:',
+    icp.description ?? "",
+    "",
+    "ENCAJA quien cumple:",
     ...icp.criteria.map((c) => `- ${c.signal}`),
-    '',
-    'NO encaja quien:',
+    "",
+    "NO encaja quien:",
     ...icp.disqualifiers.map((d) => `- ${d.signal}`),
-  ].join('\n')
+  ].join("\n");
 }
 
 export type FiltrosTraducidos = {
-  input: Record<string, unknown>
-  razonamiento: string
-  angulo: string
-  usage: Usage
-}
+  input: Record<string, unknown>;
+  razonamiento: string;
+  angulo: string;
+  usage: Usage;
+};
 
 export async function traducirIcpAFiltros(
   icp: IcpParaProspeccion,
@@ -142,23 +227,23 @@ export async function traducirIcpAFiltros(
    */
   angulosUsados: string[] = [],
 ): Promise<FiltrosTraducidos> {
-  const schema = fuente === 'linkedin' ? SCHEMA_LINKEDIN : SCHEMA_INSTAGRAM
+  const schema = SCHEMAS[fuente];
 
   const evitar = angulosUsados.length
     ? [
-        '',
-        'YA SE HAN BUSCADO ESTOS ÁNGULOS. El tuyo tiene que ser claramente distinto,',
-        'no una variación cosmética del mismo:',
+        "",
+        "YA SE HAN BUSCADO ESTOS ÁNGULOS. El tuyo tiene que ser claramente distinto,",
+        "no una variación cosmética del mismo:",
         ...angulosUsados.map((a) => `- ${a}`),
-        '',
-        'Formas válidas de cambiar de ángulo, en este orden de preferencia:',
-        '1. Otra vertical o sector adyacente que siga cumpliendo el ICP.',
-        '2. Otra zona geográfica.',
-        '3. Otros cargos que también decidan la compra (de fundador a director comercial).',
-        '4. Otro tamaño de empresa dentro del rango del ICP.',
-        'Lo que NO vale: los mismos filtros con una palabra cambiada en searchQuery.',
-      ].join('\n')
-    : ''
+        "",
+        "Formas válidas de cambiar de ángulo, en este orden de preferencia:",
+        "1. Otra vertical o sector adyacente que siga cumpliendo el ICP.",
+        "2. Otra zona geográfica.",
+        "3. Otros cargos que también decidan la compra (de fundador a director comercial).",
+        "4. Otro tamaño de empresa dentro del rango del ICP.",
+        "Lo que NO vale: los mismos filtros con una palabra cambiada en searchQuery.",
+      ].join("\n")
+    : "";
 
   const { data, usage } = await chatJson<
     Record<string, unknown> & { razonamiento: string; angulo: string }
@@ -168,37 +253,113 @@ export async function traducirIcpAFiltros(
     temperature: angulosUsados.length ? 0.7 : 0.2,
     messages: [
       {
-        role: 'system',
+        role: "system",
         content: [
           `Traduces un perfil de cliente ideal a los filtros de búsqueda de ${SUPPORTED_ACTORS[fuente].label}.`,
-          '',
-          'Reglas:',
-          '- Prefiere filtros que estrechen de verdad. Una búsqueda demasiado abierta gasta dinero y devuelve ruido.',
-          '- Pero no la estreches tanto que no salga nadie: si dudas entre dos cargos, pon los dos.',
-          '- Los descalificadores del ICP van a los campos de exclusión cuando exista uno.',
-          '- No inventes valores de enum. Usa solo los que te da el esquema.',
-        ].join('\n'),
+          "",
+          "Reglas:",
+          "- Prefiere filtros que estrechen de verdad. Una búsqueda demasiado abierta gasta dinero y devuelve ruido.",
+          "- Pero no la estreches tanto que no salga nadie: si dudas entre dos cargos, pon los dos.",
+          "- Los descalificadores del ICP van a los campos de exclusión cuando exista uno.",
+          "- No inventes valores de enum. Usa solo los que te da el esquema.",
+        ].join("\n"),
       },
       {
-        role: 'user',
+        role: "user",
         content: [
           describirIcp(icp),
-          brief ? `\nInstrucción adicional del usuario:\n${brief}` : '',
+          brief ? `\nInstrucción adicional del usuario:\n${brief}` : "",
           evitar,
         ]
-          .join('\n')
+          .join("\n")
           .trim(),
       },
     ],
-    jsonSchema: { name: 'filtros_de_busqueda', schema: schema as unknown as Record<string, unknown> },
-  })
+    jsonSchema: {
+      name: "filtros_de_busqueda",
+      schema: schema as unknown as Record<string, unknown>,
+    },
+  });
 
-  const { razonamiento, angulo, ...input } = data
+  const { razonamiento, angulo, ...input } = data;
   // Un array vacío es un filtro que no filtra y confunde al leer el registro.
   const limpio = Object.fromEntries(
-    Object.entries(input).filter(([, v]) => !(Array.isArray(v) && v.length === 0) && v !== ''),
-  )
-  return { input: limpio, razonamiento, angulo, usage }
+    Object.entries(input).filter(
+      ([, v]) => !(Array.isArray(v) && v.length === 0) && v !== "",
+    ),
+  );
+  return { input: limpio, razonamiento, angulo, usage };
+}
+
+/**
+ * Los filtros que produce el modelo, más lo que decide el sistema.
+ *
+ * El tope de resultados se llama distinto en cada actor (`maxItems`,
+ * `searchLimit`, `maxCrawledPlacesPerSearch`) y esto estaba copiado en las dos
+ * rutas que lanzan búsquedas. Vive aquí para que añadir una fuente sea un solo
+ * sitio y para que las dos no se desincronicen.
+ */
+/** Valores que el actor de LinkedIn acepta. Fuera de esta lista devuelve un 400. */
+const SENIORITY_VALIDOS = ["100", "110", "120", "130", "200", "210", "220", "300", "310", "320"];
+const HEADCOUNT_VALIDOS = ["A", "B", "C", "D", "E", "F", "G", "H", "I"];
+
+/**
+ * Los enums del actor de LinkedIn son CADENAS, y el modelo a veces devuelve
+ * números (`310` en vez de `"310"`) o se inventa un código que no existe. El
+ * actor responde 400, la búsqueda muere entera y el ángulo se desperdicia: ya
+ * pasó con "clínicas de salud mental en Madrid".
+ *
+ * Se convierte a cadena y se descarta lo que no esté en la lista. Un filtro de
+ * menos devuelve gente de más, que se recupera puntuando; un 400 no devuelve
+ * nada.
+ */
+function soloValores(valor: unknown, permitidos: string[]): string[] | undefined {
+  if (!Array.isArray(valor)) return undefined;
+  const limpio = valor.map((v) => String(v)).filter((v) => permitidos.includes(v));
+  return limpio.length ? limpio : undefined;
+}
+
+export function construirEntrada(
+  fuente: ProspectSource,
+  filtros: Record<string, unknown>,
+  maxItems: number,
+): Record<string, unknown> {
+  if (fuente === "linkedin") {
+    const { seniorityLevelIds, companyHeadcount, ...resto } = filtros;
+    const seniority = soloValores(seniorityLevelIds, SENIORITY_VALIDOS);
+    const plantilla = soloValores(companyHeadcount, HEADCOUNT_VALIDOS);
+    return {
+      ...resto,
+      ...(seniority ? { seniorityLevelIds: seniority } : {}),
+      ...(plantilla ? { companyHeadcount: plantilla } : {}),
+      maxItems,
+      profileScraperMode: "Short",
+    };
+  }
+  if (fuente === "instagram") {
+    return { ...filtros, resultsType: "details", searchLimit: maxItems };
+  }
+
+  // Google Maps cuenta el tope POR TÉRMINO de búsqueda, no en total. Con cuatro
+  // términos, pedir 50 traería 200 sitios y cuadruplicaría la factura sin que
+  // nadie lo hubiese decidido. Se reparte el presupuesto entre los términos.
+  const terminos = Array.isArray(filtros.searchStringsArray)
+    ? filtros.searchStringsArray.length
+    : 1;
+  return {
+    ...filtros,
+    maxCrawledPlacesPerSearch: Math.max(
+      5,
+      Math.ceil(maxItems / Math.max(1, terminos)),
+    ),
+    language: "es",
+    countryCode: "es",
+    // Sin web no hay de dónde sacar el correo, y el correo es el único motivo
+    // por el que se usa esta fuente.
+    website: "withWebsite",
+    scrapeContacts: true,
+    skipClosedPlaces: true,
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -206,22 +367,22 @@ export async function traducirIcpAFiltros(
 /* -------------------------------------------------------------------------- */
 
 export type CandidatoNormalizado = {
-  fullName: string
-  headline: string | null
-  company: string | null
-  location: string | null
-  linkedinUrl: string | null
-  instagramUsername: string | null
-  email: string | null
-  providerId: string | null
-  raw: Record<string, unknown>
-}
+  fullName: string;
+  headline: string | null;
+  company: string | null;
+  location: string | null;
+  linkedinUrl: string | null;
+  instagramUsername: string | null;
+  email: string | null;
+  providerId: string | null;
+  raw: Record<string, unknown>;
+};
 
 function texto(...valores: unknown[]): string | null {
   for (const v of valores) {
-    if (typeof v === 'string' && v.trim()) return v.trim()
+    if (typeof v === "string" && v.trim()) return v.trim();
   }
-  return null
+  return null;
 }
 
 /**
@@ -233,15 +394,15 @@ export function normalizarCandidato(
   fuente: ProspectSource,
   item: Record<string, unknown>,
 ): CandidatoNormalizado | null {
-  const raw = item as Record<string, any>
+  const raw = item as Record<string, any>;
 
-  if (fuente === 'linkedin') {
+  if (fuente === "linkedin") {
     const nombre =
       texto(raw.name, raw.fullName, raw.full_name) ??
-      texto([raw.firstName, raw.lastName].filter(Boolean).join(' '))
-    const url = texto(raw.linkedinUrl, raw.profileUrl, raw.url, raw.publicUrl)
-    const identificador = texto(raw.publicIdentifier, raw.public_identifier)
-    if (!nombre || !(url || identificador)) return null
+      texto([raw.firstName, raw.lastName].filter(Boolean).join(" "));
+    const url = texto(raw.linkedinUrl, raw.profileUrl, raw.url, raw.publicUrl);
+    const identificador = texto(raw.publicIdentifier, raw.public_identifier);
+    if (!nombre || !(url || identificador)) return null;
 
     return {
       fullName: nombre,
@@ -252,17 +413,46 @@ export function normalizarCandidato(
         raw.companyName,
         raw.company,
       ),
-      location: texto(raw.location?.linkedinText, raw.location?.parsed?.text, raw.location, raw.geo),
+      location: texto(
+        raw.location?.linkedinText,
+        raw.location?.parsed?.text,
+        raw.location,
+        raw.geo,
+      ),
       linkedinUrl: url ?? `https://www.linkedin.com/in/${identificador}`,
       instagramUsername: null,
       email: texto(raw.email, raw.emailAddress),
       providerId: texto(raw.id, raw.profileId, raw.urn),
       raw: item,
-    }
+    };
   }
 
-  const usuario = texto(raw.username, raw.ownerUsername, raw.userName)
-  if (!usuario) return null
+  if (fuente === "email") {
+    const nombre = texto(raw.title, raw.name, raw.placeName);
+    // Los emails vienen de `scrapeContacts`, que entra en la web del negocio.
+    // Sin correo no hay a quién escribirle: la fila no vale para esta campaña.
+    const correos = Array.isArray(raw.emails) ? raw.emails : [];
+    const correo = texto(correos[0], raw.email, raw.contactEmail);
+    if (!nombre || !correo) return null;
+
+    return {
+      fullName: nombre,
+      headline: texto(raw.categoryName, raw.category, raw.subTitle),
+      company: nombre,
+      location: texto(raw.city, raw.address, raw.neighborhood),
+      linkedinUrl: texto(
+        Array.isArray(raw.linkedIns) ? raw.linkedIns[0] : null,
+      ),
+      instagramUsername: null,
+      email: correo,
+      // El placeId es estable entre ejecuciones; la URL de Maps no siempre.
+      providerId: texto(raw.placeId, raw.fid, raw.cid),
+      raw: item,
+    };
+  }
+
+  const usuario = texto(raw.username, raw.ownerUsername, raw.userName);
+  if (!usuario) return null;
   return {
     fullName: texto(raw.fullName, raw.name, raw.ownerFullName) ?? usuario,
     headline: texto(raw.biography, raw.bio),
@@ -273,7 +463,7 @@ export function normalizarCandidato(
     email: texto(raw.publicEmail, raw.email),
     providerId: texto(raw.id, raw.pk),
     raw: item,
-  }
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -281,92 +471,101 @@ export function normalizarCandidato(
 /* -------------------------------------------------------------------------- */
 
 export type Puntuacion = {
-  indice: number
-  score: number
-  verdict: 'encaja' | 'dudoso' | 'no_encaja'
-  reasoning: string
-}
+  indice: number;
+  score: number;
+  verdict: "encaja" | "dudoso" | "no_encaja";
+  reasoning: string;
+};
 
 const SCHEMA_PUNTUACION = {
-  type: 'object',
+  type: "object",
   additionalProperties: false,
   properties: {
     resultados: {
-      type: 'array',
+      type: "array",
       items: {
-        type: 'object',
+        type: "object",
         additionalProperties: false,
         properties: {
-          indice: { type: 'integer', description: 'El número que acompaña al candidato.' },
-          score: { type: 'integer', description: 'Encaje con el ICP, de 0 a 100.' },
-          verdict: { type: 'string', enum: ['encaja', 'dudoso', 'no_encaja'] },
+          indice: {
+            type: "integer",
+            description: "El número que acompaña al candidato.",
+          },
+          score: {
+            type: "integer",
+            description: "Encaje con el ICP, de 0 a 100.",
+          },
+          verdict: { type: "string", enum: ["encaja", "dudoso", "no_encaja"] },
           reasoning: {
-            type: 'string',
-            description: 'Una frase. Qué señal concreta del perfil lo decide.',
+            type: "string",
+            description: "Una frase. Qué señal concreta del perfil lo decide.",
           },
         },
-        required: ['indice', 'score', 'verdict', 'reasoning'],
+        required: ["indice", "score", "verdict", "reasoning"],
       },
     },
   },
-  required: ['resultados'],
-} as const
+  required: ["resultados"],
+} as const;
 
 /** Lotes: puntuar de uno en uno multiplica el coste y la latencia sin mejorar nada. */
-const TAMANO_LOTE = 12
+const TAMANO_LOTE = 12;
 
 export async function puntuarCandidatos(
   icp: IcpParaProspeccion,
   candidatos: CandidatoNormalizado[],
   modelo: string,
 ): Promise<{ puntuaciones: Map<number, Puntuacion>; costeUsd: number }> {
-  const puntuaciones = new Map<number, Puntuacion>()
-  let costeUsd = 0
+  const puntuaciones = new Map<number, Puntuacion>();
+  let costeUsd = 0;
 
   for (let inicio = 0; inicio < candidatos.length; inicio += TAMANO_LOTE) {
-    const lote = candidatos.slice(inicio, inicio + TAMANO_LOTE)
+    const lote = candidatos.slice(inicio, inicio + TAMANO_LOTE);
     const listado = lote
       .map((c, i) =>
         [
           `### Candidato ${inicio + i}`,
           `Nombre: ${c.fullName}`,
-          c.headline ? `Titular: ${c.headline}` : '',
-          c.company ? `Empresa: ${c.company}` : '',
-          c.location ? `Ubicación: ${c.location}` : '',
+          c.headline ? `Titular: ${c.headline}` : "",
+          c.company ? `Empresa: ${c.company}` : "",
+          c.location ? `Ubicación: ${c.location}` : "",
         ]
           .filter(Boolean)
-          .join('\n'),
+          .join("\n"),
       )
-      .join('\n\n')
+      .join("\n\n");
 
     const { data, usage } = await chatJson<{ resultados: Puntuacion[] }>({
       model: modelo,
       temperature: 0,
       messages: [
         {
-          role: 'system',
+          role: "system",
           content: [
-            'Puntúas candidatos contra un perfil de cliente ideal. Devuelves un resultado por candidato, con su índice.',
-            '',
-            'Un descalificador del ICP fuerza no_encaja y score por debajo de 20, por muy bien que encaje en lo demás.',
+            "Puntúas candidatos contra un perfil de cliente ideal. Devuelves un resultado por candidato, con su índice.",
+            "",
+            "Un descalificador del ICP fuerza no_encaja y score por debajo de 20, por muy bien que encaje en lo demás.",
             'Si el perfil no da información suficiente para decidir, es "dudoso": no lo apruebes por si acaso.',
-            'Sé duro. Estos candidatos van a recibir un mensaje de una persona real.',
-          ].join('\n'),
+            "Sé duro. Estos candidatos van a recibir un mensaje de una persona real.",
+          ].join("\n"),
         },
-        { role: 'user', content: `${describirIcp(icp)}\n\n---\n\n${listado}` },
+        { role: "user", content: `${describirIcp(icp)}\n\n---\n\n${listado}` },
       ],
       jsonSchema: {
-        name: 'puntuaciones',
+        name: "puntuaciones",
         schema: SCHEMA_PUNTUACION as unknown as Record<string, unknown>,
       },
-    })
+    });
 
-    costeUsd += usage.cost ?? 0
+    costeUsd += usage.cost ?? 0;
     for (const r of data.resultados) {
       // Se recorta en vez de confiar: el CHECK de la base rechazaría un 140.
-      puntuaciones.set(r.indice, { ...r, score: Math.max(0, Math.min(100, r.score)) })
+      puntuaciones.set(r.indice, {
+        ...r,
+        score: Math.max(0, Math.min(100, r.score)),
+      });
     }
   }
 
-  return { puntuaciones, costeUsd }
+  return { puntuaciones, costeUsd };
 }

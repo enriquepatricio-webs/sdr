@@ -11,39 +11,62 @@
  * produce reglas con mucha seguridad y ningún fundamento, que es peor que no
  * tener nada.
  */
-import { and, desc, eq, gte, sql } from 'drizzle-orm'
-import { db } from './db'
-import { type Lecciones, campaigns, leads, meetings, touches } from './db/schema'
-import { chatJson } from './openrouter'
+import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { db } from "./db";
+import {
+  type Lecciones,
+  campaigns,
+  leads,
+  meetings,
+  touches,
+} from "./db/schema";
+import { chatJson } from "./openrouter";
 
 /** Por debajo de esto no se destila nada. */
-export const MINIMO_PARA_APRENDER = 30
+export const MINIMO_PARA_APRENDER = 30;
 
 export type Resultados = {
-  enviados: number
-  respondidos: number
-  reuniones: number
-  tasaRespuesta: number
-  tasaReunion: number
-}
+  enviados: number;
+  respondidos: number;
+  reuniones: number;
+  tasaRespuesta: number;
+  tasaReunion: number;
+};
 
-export async function calcularResultados(desde: Date): Promise<Resultados> {
+export async function calcularResultados(
+  desde: Date,
+  workspaceId?: string | null,
+): Promise<Resultados> {
   const [fila] = await db
     .select({
       enviados: sql<number>`count(*) filter (where ${touches.direction} = 'out' and ${touches.status} = 'enviado')::int`,
       respondidos: sql<number>`count(distinct ${touches.leadId}) filter (where ${touches.direction} = 'in')::int`,
     })
     .from(touches)
-    .where(gte(touches.createdAt, desde))
+    .innerJoin(leads, eq(touches.leadId, leads.id))
+    .innerJoin(campaigns, eq(leads.campaignId, campaigns.id))
+    .where(
+      and(
+        gte(touches.createdAt, desde),
+        ...(workspaceId ? [eq(campaigns.workspaceId, workspaceId)] : []),
+      ),
+    );
 
   const [reu] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(meetings)
-    .where(gte(meetings.createdAt, desde))
+    .innerJoin(leads, eq(meetings.leadId, leads.id))
+    .innerJoin(campaigns, eq(leads.campaignId, campaigns.id))
+    .where(
+      and(
+        gte(meetings.createdAt, desde),
+        ...(workspaceId ? [eq(campaigns.workspaceId, workspaceId)] : []),
+      ),
+    );
 
-  const enviados = Number(fila?.enviados ?? 0)
-  const respondidos = Number(fila?.respondidos ?? 0)
-  const reuniones = Number(reu?.n ?? 0)
+  const enviados = Number(fila?.enviados ?? 0);
+  const respondidos = Number(fila?.respondidos ?? 0);
+  const reuniones = Number(reu?.n ?? 0);
 
   return {
     enviados,
@@ -51,10 +74,14 @@ export async function calcularResultados(desde: Date): Promise<Resultados> {
     reuniones,
     tasaRespuesta: enviados ? respondidos / enviados : 0,
     tasaReunion: respondidos ? reuniones / respondidos : 0,
-  }
+  };
 }
 
-export type Muestra = { texto: string; resultado: 'respondio' | 'silencio'; acaboEnReunion: boolean }
+export type Muestra = {
+  texto: string;
+  resultado: "respondio" | "silencio";
+  acaboEnReunion: boolean;
+};
 
 /**
  * Primeros toques enviados, con lo que pasó después.
@@ -66,7 +93,10 @@ export type Muestra = { texto: string; resultado: 'respondio' | 'silencio'; acab
  * inservibles: lo que abre una conversación vendiendo software industrial no
  * tiene nada que ver con lo que la abre vendiendo formación.
  */
-export async function obtenerMuestras(limite = 200, workspaceId?: string | null): Promise<Muestra[]> {
+export async function obtenerMuestras(
+  limite = 200,
+  workspaceId?: string | null,
+): Promise<Muestra[]> {
   const filas = await db
     .select({
       texto: touches.body,
@@ -85,45 +115,50 @@ export async function obtenerMuestras(limite = 200, workspaceId?: string | null)
     .innerJoin(campaigns, eq(leads.campaignId, campaigns.id))
     .where(
       and(
-        eq(touches.direction, 'out'),
-        eq(touches.status, 'enviado'),
+        eq(touches.direction, "out"),
+        eq(touches.status, "enviado"),
         eq(touches.step, 1),
         ...(workspaceId ? [eq(campaigns.workspaceId, workspaceId)] : []),
       ),
     )
     .orderBy(desc(touches.sentAt))
-    .limit(limite)
+    .limit(limite);
 
   return filas.map((f) => ({
     texto: f.texto,
-    resultado: Number(f.respuestas) > 0 ? 'respondio' : 'silencio',
+    resultado: Number(f.respuestas) > 0 ? "respondio" : "silencio",
     acaboEnReunion: Number(f.reunion) > 0,
-  }))
+  }));
 }
 
 const SCHEMA_LECCIONES = {
-  type: 'object',
+  type: "object",
   additionalProperties: false,
   properties: {
     funciona: {
-      type: 'array',
-      items: { type: 'string' },
+      type: "array",
+      items: { type: "string" },
       description:
         'Como mucho 5 frases. Cada una, una pauta concreta y accionable sacada de los mensajes que SÍ obtuvieron respuesta. Nada de generalidades tipo "ser personal".',
     },
     noFunciona: {
-      type: 'array',
-      items: { type: 'string' },
+      type: "array",
+      items: { type: "string" },
       description:
-        'Como mucho 5 frases. Patrones concretos presentes en los mensajes que murieron en silencio y ausentes en los que funcionaron.',
+        "Como mucho 5 frases. Patrones concretos presentes en los mensajes que murieron en silencio y ausentes en los que funcionaron.",
     },
   },
-  required: ['funciona', 'noFunciona'],
-} as const
+  required: ["funciona", "noFunciona"],
+} as const;
 
 export type ResultadoAprendizaje =
-  | { aprendio: false; motivo: 'sin_datos'; enviados: number; hacenFalta: number }
-  | { aprendio: true; lecciones: Lecciones; costeUsd: number }
+  | {
+      aprendio: false;
+      motivo: "sin_datos";
+      enviados: number;
+      hacenFalta: number;
+    }
+  | { aprendio: true; lecciones: Lecciones; costeUsd: number };
 
 /**
  * Destila lecciones comparando lo que funcionó con lo que no.
@@ -136,60 +171,66 @@ export async function destilarLecciones(
   modelo: string,
   workspaceId?: string | null,
 ): Promise<ResultadoAprendizaje> {
-  const muestras = await obtenerMuestras(200, workspaceId)
+  const muestras = await obtenerMuestras(200, workspaceId);
 
   if (muestras.length < MINIMO_PARA_APRENDER) {
     return {
       aprendio: false,
-      motivo: 'sin_datos',
+      motivo: "sin_datos",
       enviados: muestras.length,
       hacenFalta: MINIMO_PARA_APRENDER - muestras.length,
-    }
+    };
   }
 
-  const ganadores = muestras.filter((m) => m.resultado === 'respondio')
-  const perdedores = muestras.filter((m) => m.resultado === 'silencio')
+  const ganadores = muestras.filter((m) => m.resultado === "respondio");
+  const perdedores = muestras.filter((m) => m.resultado === "silencio");
 
   // Si todo cayó del mismo lado no hay contraste que analizar.
   if (!ganadores.length || !perdedores.length) {
     return {
       aprendio: false,
-      motivo: 'sin_datos',
+      motivo: "sin_datos",
       enviados: muestras.length,
       hacenFalta: 0,
-    }
+    };
   }
 
-  const { data, usage } = await chatJson<{ funciona: string[]; noFunciona: string[] }>({
+  const { data, usage } = await chatJson<{
+    funciona: string[];
+    noFunciona: string[];
+  }>({
     model: modelo,
     temperature: 0.3,
     messages: [
       {
-        role: 'system',
+        role: "system",
         content: [
-          'Analizas mensajes de prospección en frío ya enviados, etiquetados por resultado.',
-          '',
-          'Tu trabajo es encontrar la DIFERENCIA entre los que obtuvieron respuesta y los que',
-          'murieron en silencio. No des consejos generales de ventas: solo lo que se observa',
-          'en estos textos concretos.',
-          '',
-          'Si un patrón aparece igual en los dos grupos, NO es una lección: descártalo.',
-          'Prefiere pocas frases y sólidas a muchas y vagas.',
-        ].join('\n'),
+          "Analizas mensajes de prospección en frío ya enviados, etiquetados por resultado.",
+          "",
+          "Tu trabajo es encontrar la DIFERENCIA entre los que obtuvieron respuesta y los que",
+          "murieron en silencio. No des consejos generales de ventas: solo lo que se observa",
+          "en estos textos concretos.",
+          "",
+          "Si un patrón aparece igual en los dos grupos, NO es una lección: descártalo.",
+          "Prefiere pocas frases y sólidas a muchas y vagas.",
+        ].join("\n"),
       },
       {
-        role: 'user',
+        role: "user",
         content: [
           `OBTUVIERON RESPUESTA (${ganadores.length}):`,
           ...ganadores.slice(0, 40).map((m, i) => `${i + 1}. ${m.texto}`),
-          '',
+          "",
           `SILENCIO (${perdedores.length}):`,
           ...perdedores.slice(0, 40).map((m, i) => `${i + 1}. ${m.texto}`),
-        ].join('\n'),
+        ].join("\n"),
       },
     ],
-    jsonSchema: { name: 'lecciones', schema: SCHEMA_LECCIONES as unknown as Record<string, unknown> },
-  })
+    jsonSchema: {
+      name: "lecciones",
+      schema: SCHEMA_LECCIONES as unknown as Record<string, unknown>,
+    },
+  });
 
   return {
     aprendio: true,
@@ -200,5 +241,5 @@ export async function destilarLecciones(
       basadoEn: muestras.length,
       actualizado: new Date().toISOString(),
     },
-  }
+  };
 }

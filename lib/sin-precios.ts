@@ -24,3 +24,33 @@ export function mencionaDinero(texto: string): boolean {
 /** Lo que se le dice al agente cuando se le bloquea un mensaje. */
 export const AVISO_SIN_PRECIOS =
   'Ese mensaje menciona dinero y no puede salir. Reescríbelo sin cifras ni monedas: explica por qué el número se da en la reunión y cierra pidiendo el día.'
+
+/**
+ * Quita las cifras de dinero de un texto antes de meterlo en el prompt.
+ *
+ * El contexto de la empresa sale de scrapear su propia web, y las webs llevan
+ * tarifas: "desde 700€", "+1.000€/mes". El filtro de salida las bloquea si el
+ * agente las repite, pero entonces el mensaje se rechaza, el agente reescribe y
+ * se gastan turnos. Es mejor que no las vea.
+ *
+ * Se sustituyen por una marca explícita en vez de borrarlas para que la frase
+ * siga teniendo sentido y el agente entienda que ahí había un número que no le
+ * corresponde decir.
+ */
+/**
+ * Los símbolos van sin `\b` y las palabras con él, a propósito: `€` no es un
+ * carácter de palabra, así que `700€ al mes` no tiene frontera después del euro
+ * y un `\b` al final no llegaba a casar nunca.
+ */
+const CIFRA_CON_MONEDA = new RegExp(
+  [
+    '(?:€|\\$|£)\\s?\\d[\\d.,]*', //  350 €  ->  €350
+    '\\d[\\d.,]*\\s?(?:€|\\$|£)', //  350€
+    '\\d[\\d.,]*\\s?(?:eur|usd|gbp|euros?|d[oó]lares?|libras?)\\b', //  350 euros
+  ].join('|'),
+  'gi',
+)
+
+export function sinCifrasDeDinero(texto: string): string {
+  return texto.replace(CIFRA_CON_MONEDA, '(importe omitido)')
+}

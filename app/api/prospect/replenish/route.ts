@@ -10,13 +10,17 @@ import {
 } from "@/lib/db/schema";
 import { serverError } from "@/lib/api";
 import { SUPPORTED_ACTORS, startRun } from "@/lib/apify";
-import { traducirIcpAFiltros } from "@/lib/prospect";
+import { construirEntrada, traducirIcpAFiltros } from "@/lib/prospect";
+import { barrerBusquedasPendientes } from "@/lib/prospect-ingest";
 import { planificarReabastecimiento } from "@/lib/replenish";
 import { getSettings } from "@/lib/settings";
 import { ajustesEfectivos, listarWorkspaces } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
+
+/** Cuántas campañas se reabastecen como mucho en una vuelta. */
+const CAMPANAS_POR_VUELTA = 4;
 
 /**
  * Rellena la cola de leads cuando se está quedando vacía.
@@ -45,6 +49,11 @@ export const maxDuration = 300;
  */
 export async function POST() {
   try {
+    // PRIMERO se recoge lo que ya está pagado y terminado. Si no, se lanzarían
+    // búsquedas nuevas cada media hora mientras las anteriores esperan a que
+    // alguien abra el dashboard, y la campaña seguiría vacía igual.
+    const barrido = await barrerBusquedasPendientes();
+
     const globales = await getSettings();
 
     const inicioDelDia = new Date();
@@ -115,14 +124,33 @@ export async function POST() {
         continue;
       }
 
-      await lanzarPara(empresa.name, plan.campanas, ajustes, estados, lanzadas);
+      // Como mucho unas pocas por vuelta: cada una lleva una llamada al modelo
+      // para traducir el ICP a filtros, y ocho seguidas no caben en los 300 s
+      // de la función. El cron pasa cada media hora, así que no se pierde nada.
+      const hueco = CAMPANAS_POR_VUELTA - lanzadas.length
+      if (hueco <= 0) break
+
+      await lanzarPara(
+        empresa.name,
+        plan.campanas.slice(0, hueco),
+        ajustes,
+        estados,
+        lanzadas,
+        globales.autoProspectMaxSearchesPerDay,
+        inicioDelDia,
+      );
     }
 
     await db.insert(runLogs).values({
       workflow: "sdr-reabastecer",
       level: "info",
       message: `Reabastecimiento: ${lanzadas.length} búsquedas lanzadas`,
-      payload: { lanzadas, saltadas, busquedasHoy: Number(busquedasHoy) },
+      payload: {
+        lanzadas,
+        saltadas,
+        barrido,
+        busquedasHoy: Number(busquedasHoy),
+      },
     });
 
     return NextResponse.json({
@@ -152,11 +180,15 @@ async function lanzarPara(
     busquedaId: string;
     angulo: string;
   }[],
+  topeDiario: number,
+  inicioDelDia: Date,
 ) {
   for (const objetivo of objetivos) {
     const campana = estados.find((c) => c.id === objetivo.id);
     if (!campana) continue;
-    const fuente = campana.channel === "instagram" ? "instagram" : "linkedin";
+    // El canal ES la fuente: para mandar un correo hace falta un correo, y eso
+    // solo lo da Google Maps.
+    const fuente = campana.channel;
 
     const [icp] = await db
       .select()
@@ -186,24 +218,21 @@ async function lanzarPara(
     );
 
     const actor = SUPPORTED_ACTORS[fuente].actor;
-    const input =
-      fuente === "linkedin"
-        ? {
-            ...filtros.input,
-            maxItems: ajustes.autoProspectMaxItems,
-            profileScraperMode: "Short",
-          }
-        : {
-            ...filtros.input,
-            resultsType: "details",
-            searchLimit: ajustes.autoProspectMaxItems,
-          };
+    const input = construirEntrada(
+      fuente,
+      filtros.input,
+      ajustes.autoProspectMaxItems,
+    );
 
     const [busqueda] = await db
       .insert(prospectSearches)
       .values({
         icpId: icp.id,
         campaignId: campana.id,
+        // Sin esto la ingesta usa el umbral de auto-importación de la primera
+        // empresa y mete en la campaña de un cliente candidatos que el suyo
+        // habría descartado.
+        workspaceId: ajustes.workspace?.id ?? null,
         name: `Auto · ${filtros.angulo}`,
         source: fuente,
         origin: "automatica",

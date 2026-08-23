@@ -35,6 +35,23 @@ export type EntradaCupo = {
   lote: number
 }
 
+/**
+ * Cuánto tiempo un borrador reserva su hueco de cupo.
+ *
+ * Los dos caminos que envían por Instagram —la campaña en frío y el imán—
+ * cuentan cada uno por su lado, y ninguno veía lo que el otro estaba a punto de
+ * mandar: los dos creían tener los 8 de la hora enteros y entre los dos podían
+ * sacar 16, que es por encima del límite de Instagram y camino directo al
+ * bloqueo de la cuenta.
+ *
+ * Como los dos ESCRIBEN el toque en 'borrador' antes de enviar, contar los
+ * borradores recientes convierte ese registro en una reserva sin añadir ninguna
+ * pieza nueva. Cinco minutos porque el envío ocurre en segundos: un borrador más
+ * viejo es uno que no salió (autopiloto apagado o fallo), y ese no debe seguir
+ * ocupando sitio para siempre.
+ */
+export const MINUTOS_QUE_RESERVA_UN_BORRADOR = 5
+
 export function calcularCupo(e: EntradaCupo): Cupo {
   const quedaCuenta = e.topeDiarioCuenta - e.enviadosHoyCuenta
   if (quedaCuenta <= 0) {
