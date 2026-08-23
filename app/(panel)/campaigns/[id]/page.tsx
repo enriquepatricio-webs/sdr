@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { asc, eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { accounts, campaigns, icps, playbooks } from '@/lib/db/schema'
+import { accounts, campaigns, icps, playbooks, sellers } from '@/lib/db/schema'
 import { DetalleCampana } from './detalle'
 
 export const dynamic = 'force-dynamic'
@@ -12,7 +12,7 @@ export default async function PaginaCampana({ params }: { params: Promise<{ id: 
   const [campana] = await db.select().from(campaigns).where(eq(campaigns.id, id))
   if (!campana) notFound()
 
-  const [listaCuentas, listaPlaybooks, listaIcps] = await Promise.all([
+  const [listaCuentas, listaPlaybooks, listaIcps, listaEmpresas] = await Promise.all([
     db
       .select({ id: accounts.id, displayName: accounts.displayName, provider: accounts.provider, status: accounts.status })
       .from(accounts)
@@ -22,6 +22,7 @@ export default async function PaginaCampana({ params }: { params: Promise<{ id: 
       .from(playbooks)
       .orderBy(asc(playbooks.version)),
     db.select({ id: icps.id, name: icps.name }).from(icps).orderBy(asc(icps.createdAt)),
+    db.select({ id: sellers.id, name: sellers.name }).from(sellers).orderBy(asc(sellers.name)),
   ])
 
   return (
@@ -32,6 +33,7 @@ export default async function PaginaCampana({ params }: { params: Promise<{ id: 
         cuentas={listaCuentas}
         playbooks={listaPlaybooks}
         icps={listaIcps}
+        empresas={listaEmpresas}
       />
     </div>
   )

@@ -6,7 +6,14 @@
  * Si el ensayo montara el prompt de otra manera, estarías probando un agente
  * distinto del que luego escribe a la gente.
  */
-import type { BookingRules, IcpSignal, Objection, QualificationCriterion } from './db/schema'
+import type {
+  BookingRules,
+  Enrichment,
+  IcpSignal,
+  Lecciones,
+  Objection,
+  QualificationCriterion,
+} from './db/schema'
 
 export type PlaybookParaPrompt = {
   systemPrompt: string
@@ -23,9 +30,24 @@ export type IcpParaPrompt = {
   disqualifiers: IcpSignal[]
 }
 
+/** La empresa para la que se vende en esta campaña. */
+export type EmpresaVendedora = {
+  name: string
+  website: string | null
+  context: string | null
+  scrapedContext: string | null
+  offer: string | null
+}
+
 export type ContextoPrompt = {
   empresa: string
   canal: 'linkedin' | 'email' | 'instagram'
+  /** Contexto de la empresa vendedora. Sustituye a `empresa` si viene. */
+  vendedora?: EmpresaVendedora | null
+  /** Lo aprendido de los resultados reales del propio sistema. */
+  lecciones?: Lecciones | null
+  /** Lo que se averiguó de ESTE prospecto antes de escribirle. */
+  enriquecimiento?: Enrichment | null
 }
 
 const NOMBRE_CANAL: Record<ContextoPrompt['canal'], string> = {
@@ -46,7 +68,7 @@ export function construirSystemPrompt(
   // Los marcadores del playbook se resuelven aquí para que quien escribe el
   // playbook pueda hablar de "{{empresa}}" sin saber de dónde sale el valor.
   const base = playbook.systemPrompt
-    .replaceAll('{{empresa}}', contexto.empresa)
+    .replaceAll('{{empresa}}', contexto.vendedora?.name ?? contexto.empresa)
     .replaceAll('{{canal}}', NOMBRE_CANAL[contexto.canal])
 
   const criterios = playbook.qualificationCriteria
@@ -84,9 +106,40 @@ export function construirSystemPrompt(
       ].join('\n')
     : ''
 
+  const v = contexto.vendedora
+
+  const quienesSomos = v
+    ? [
+        v.website ? `Web: ${v.website}` : '',
+        v.context ?? '',
+        // Lo scrapeado va después de lo escrito a mano y marcado como tal: si se
+        // contradicen, manda lo que puso la persona.
+        v.scrapedContext ? `\nDe su web:\n${v.scrapedContext}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n')
+    : ''
+
+  const leccionesTexto = contexto.lecciones
+    ? [
+        `Sacado de ${contexto.lecciones.basadoEn} mensajes ya enviados y de lo que contestaron.`,
+        '',
+        ...(contexto.lecciones.funciona.length
+          ? ['LO QUE ESTÁ FUNCIONANDO:', ...contexto.lecciones.funciona.map((l) => `- ${l}`)]
+          : []),
+        '',
+        ...(contexto.lecciones.noFunciona.length
+          ? ['LO QUE NO:', ...contexto.lecciones.noFunciona.map((l) => `- ${l}`)]
+          : []),
+      ].join('\n')
+    : ''
+
+  const sobreEste = contexto.enriquecimiento?.resumen ?? ''
+
   return [
     base.trim(),
-    seccion('Qué vendemos', playbook.offer),
+    seccion('Quiénes somos', quienesSomos),
+    seccion('Qué vendemos', v?.offer || playbook.offer),
     seccion(`A quién buscamos: ${icp?.name ?? 'sin ICP definido'}`, icpTexto),
     seccion(
       'Qué tienes que averiguar (máximo 2 preguntas en toda la conversación)',
@@ -96,6 +149,18 @@ export function construirSystemPrompt(
     ),
     seccion('Objeciones y cómo responderlas', objeciones),
     seccion('Reglas de agendado', reglasAgenda),
+    seccion(
+      'Lo que hemos aprendido de nuestros propios resultados',
+      leccionesTexto
+        ? `${leccionesTexto}\n\nEsto pesa más que cualquier corazonada: sale de mensajes reales.`
+        : '',
+    ),
+    seccion(
+      'Sobre ESTA persona en concreto',
+      sobreEste
+        ? `${sobreEste}\n\nUsa un detalle concreto de aquí en el mensaje. No lo recites entero ni lo enumeres: uno solo, bien traído, y sigue. Y si algo no está aquí, no te lo inventes.`
+        : '',
+    ),
   ]
     .filter(Boolean)
     .join('')

@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation'
 const RUTAS = [
   { href: '/', etiqueta: 'Panel' },
   { href: '/playbook', etiqueta: 'Playbook' },
+  { href: '/empresa', etiqueta: 'Empresa' },
   { href: '/icp', etiqueta: 'ICP' },
   { href: '/prospectar', etiqueta: 'Prospectar' },
   { href: '/campaigns', etiqueta: 'Campañas' },

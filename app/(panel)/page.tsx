@@ -3,7 +3,9 @@ import { and, count, eq, gte, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { campaigns, leads, meetings, runLogs, touches } from '@/lib/db/schema'
 import { getSettings } from '@/lib/settings'
+import { MINIMO_PARA_APRENDER, obtenerMuestras } from '@/lib/insights'
 import { ParadaDeEmergencia } from './parada'
+import { Aprendizaje } from './aprendizaje'
 
 export const dynamic = 'force-dynamic'
 
@@ -37,7 +39,7 @@ function Kpi({ etiqueta, valor, nota }: { etiqueta: string; valor: string; nota?
 export default async function Panel() {
   const hace30dias = new Date(Date.now() - 30 * 24 * 3600_000)
 
-  const [porEstado, contactados, respuestas, reuniones, activas, ajustes, coste] = await Promise.all([
+  const [porEstado, contactados, respuestas, reuniones, activas, ajustes, coste, muestras] = await Promise.all([
     db.select({ status: leads.status, n: count() }).from(leads).groupBy(leads.status),
     db
       .select({ n: count() })
@@ -55,6 +57,7 @@ export default async function Panel() {
       .select({ total: sql<number>`coalesce(sum((${runLogs.payload}->>'coste_usd')::numeric), 0)::float` })
       .from(runLogs)
       .where(gte(runLogs.createdAt, hace30dias)),
+    obtenerMuestras().catch(() => []),
   ])
 
   const conteo = new Map(porEstado.map((r) => [r.status, Number(r.n)]))
@@ -108,6 +111,12 @@ export default async function Panel() {
           nota="OpenRouter, coste real"
         />
       </div>
+
+      <Aprendizaje
+        lecciones={ajustes?.lessons ?? null}
+        muestras={muestras.length}
+        minimo={MINIMO_PARA_APRENDER}
+      />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <section className="border border-linea bg-lienzo p-4">

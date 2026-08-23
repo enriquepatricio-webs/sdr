@@ -117,6 +117,31 @@ export async function startRun(
   return toRun(raw)
 }
 
+/**
+ * Ejecuta un actor y ESPERA el resultado.
+ *
+ * Solo para trabajos cortos y acotados: leer una web o un perfil suelto, que
+ * tardan segundos. Para un scraping de listas sigue usándose `startRun` y
+ * sondeo, porque bloquear una función de Vercel diez minutos no es una opción.
+ *
+ * `timeoutSecs` acota la espera; si el actor tarda más, se aborta y se devuelve
+ * lo que haya en vez de dejar colgada la petición.
+ */
+export async function runSync<T = Record<string, unknown>>(
+  actor: string,
+  input: Record<string, unknown>,
+  opts: { maxItems?: number; timeoutSecs?: number } = {},
+): Promise<T[]> {
+  const params = new URLSearchParams({
+    timeout: String(opts.timeoutSecs ?? 120),
+    ...(opts.maxItems ? { maxItems: String(opts.maxItems) } : {}),
+  })
+  return call<T[]>(`/acts/${actorPath(actor)}/run-sync-get-dataset-items?${params}`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+}
+
 export async function getRun(runId: string): Promise<ApifyRun> {
   return toRun(await call<RawRun>(`/actor-runs/${encodeURIComponent(runId)}`))
 }
@@ -167,3 +192,10 @@ export const SUPPORTED_ACTORS = {
 } as const satisfies Record<string, { actor: string; label: string; note: string }>
 
 export type ProspectSource = keyof typeof SUPPORTED_ACTORS
+
+/** Actores de lectura rápida, para enriquecer antes de escribir. */
+export const ACTORES_LECTURA = {
+  web: 'apify/website-content-crawler',
+  perfilLinkedin: 'harvestapi/linkedin-profile-scraper',
+  perfilInstagram: 'apify/instagram-profile-scraper',
+} as const

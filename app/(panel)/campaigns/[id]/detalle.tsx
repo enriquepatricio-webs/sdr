@@ -12,6 +12,7 @@ type Campana = {
   accountId: string | null
   playbookId: string | null
   icpId: string | null
+  sellerId: string | null
   dailyCap: number
   maxTouches: number
   followupDelays: number[]
@@ -31,11 +32,13 @@ export function DetalleCampana({
   cuentas,
   playbooks,
   icps,
+  empresas,
 }: {
   campana: Campana
   cuentas: { id: string; displayName: string; provider: string; status: string }[]
   playbooks: { id: string; name: string; version: number; isActive: boolean }[]
   icps: { id: string; name: string }[]
+  empresas: { id: string; name: string }[]
 }) {
   const router = useRouter()
   const [c, setC] = useState(inicial)
@@ -55,7 +58,7 @@ export function DetalleCampana({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: c.name, channel: c.channel, accountId: c.accountId,
-          playbookId: c.playbookId, icpId: c.icpId, dailyCap: c.dailyCap,
+          playbookId: c.playbookId, icpId: c.icpId, sellerId: c.sellerId, dailyCap: c.dailyCap,
           maxTouches: c.maxTouches, followupDelays: c.followupDelays, sendingWindow: c.sendingWindow,
         }),
       })
@@ -175,6 +178,21 @@ export function DetalleCampana({
                 <option key={p.id} value={p.id}>
                   {p.name} v{p.version}{p.isActive ? ' (activa)' : ''}
                 </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label htmlFor="empresa" className="etiqueta">Empresa para la que se vende</label>
+            <select
+              id="empresa"
+              value={c.sellerId ?? ''}
+              onChange={(e) => setC({ ...c, sellerId: e.target.value || null })}
+              className={`${entrada} mt-1.5`}
+            >
+              <option value="">— sin empresa —</option>
+              {empresas.map((x) => (
+                <option key={x.id} value={x.id}>{x.name}</option>
               ))}
             </select>
           </div>

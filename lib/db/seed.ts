@@ -20,6 +20,7 @@ import {
   accounts,
   campaigns,
   icps,
+  sellers,
   leads,
   meetings,
   playbooks,
@@ -461,6 +462,17 @@ export async function runSeed(
     })
     .returning()
 
+  // La empresa para la que se vende. El playbook es el método; esto, el contexto.
+  const [empresa] = await db
+    .insert(sellers)
+    .values({
+      name: 'Tu Empresa',
+      website: null,
+      context:
+        'Rellena esto en /empresa: a qué os dedicáis, a quién vendéis y qué NO debe decir el agente. Si pones vuestra web, se lee sola.',
+    })
+    .returning()
+
   const [account] = await db
     .insert(accounts)
     .values({
@@ -491,6 +503,7 @@ export async function runSeed(
       status: 'draft',
       icpId: icp.id,
       playbookId: playbook.id,
+      sellerId: empresa.id,
       accountId: account.id,
       channel: 'linkedin',
       dailyCap: DEFAULT_DAILY_LIMIT,
@@ -516,6 +529,7 @@ export async function runSeed(
   say(`  ICP        ${icp.name}`)
   say(`  Playbook   ${playbook.name} v${playbook.version} (activo)`)
   say(`  Cuenta     ${account.displayName}`)
+  say(`  Empresa    ${empresa.name}`)
   say(`  Campaña    ${campaign.name} [${campaign.status}]`)
   say(`  Leads      ${DUMMY_LEADS.length} en estado "nuevo"`)
   say('  Autopiloto OFF')

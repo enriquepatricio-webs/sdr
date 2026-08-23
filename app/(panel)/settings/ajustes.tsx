@@ -41,6 +41,42 @@ export function Ajustes({
   const [guardando, guardar] = useTransition()
   const [aviso, setAviso] = useState<string | null>(null)
   const [confirmandoAutopiloto, setConfirmando] = useState(false)
+  const [conectando, setConectando] = useState<string | null>(null)
+  const [sincronizando, setSincronizando] = useState(false)
+
+  async function conectar(proveedor: 'LINKEDIN' | 'INSTAGRAM' | 'GOOGLE') {
+    setConectando(proveedor)
+    setAviso(null)
+    try {
+      const res = await fetch('/api/accounts/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proveedor }),
+      })
+      const json = await res.json()
+      if (!res.ok) { setAviso(json.error ?? 'No se pudo generar el enlace.'); return }
+      // Se abre en una pestaña aparte: las credenciales se meten en la pantalla
+      // de Unipile, nunca aquí.
+      window.open(json.url, '_blank', 'noopener,noreferrer')
+      setAviso('Se abrió el asistente de Unipile. Cuando termines, pulsa "Sincronizar".')
+    } finally { setConectando(null) }
+  }
+
+  async function sincronizar() {
+    setSincronizando(true)
+    setAviso(null)
+    try {
+      const res = await fetch('/api/accounts/sync', { method: 'POST' })
+      const json = await res.json()
+      if (!res.ok) { setAviso(json.error ?? 'No se pudo sincronizar.'); return }
+      setAviso(
+        json.nuevas.length
+          ? `${json.nuevas.length} cuenta(s) nueva(s): ${json.nuevas.join(', ')}. Entran en pausa; actívalas abajo.`
+          : `Sin cuentas nuevas (${json.encontradas} vistas en Unipile).`,
+      )
+      router.refresh()
+    } finally { setSincronizando(false) }
+  }
 
   useEffect(() => {
     fetch('/api/openrouter/models')
@@ -257,6 +293,22 @@ export function Ajustes({
             />
           </div>
 
+          <label className="flex items-start gap-2 border-t border-linea pt-4 text-sm">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={ajustes.enrichBeforeContact}
+              onChange={(e) => guardarAjustes({ enrichBeforeContact: e.target.checked })}
+            />
+            <span>
+              <span className="font-medium">Leer el perfil y la web antes de escribir</span>
+              <span className="mt-0.5 block text-xs text-tenue">
+                Añade unos 30 s por lead y cuesta unos céntimos, pero es la diferencia entre un
+                mensaje que cita algo suyo y uno que parece una plantilla.
+              </span>
+            </span>
+          </label>
+
           <div>
             <label htmlFor="telegram" className="etiqueta">Chat de Telegram para los avisos</label>
             <p className="mt-0.5 text-xs text-tenue">
@@ -275,9 +327,41 @@ export function Ajustes({
         </section>
 
         <section className="border border-linea bg-lienzo p-4">
-          <h2 className="etiqueta">Cuentas de Unipile</h2>
+          <h2 className="etiqueta">Cuentas</h2>
           <p className="mt-0.5 text-xs text-tenue">
-            Las cuentas se conectan desde Unipile. Aquí se ajustan sus topes y se pausan.
+            Conecta desde aquí. Tus credenciales se meten en la pantalla de Unipile: este
+            dashboard no las ve ni las guarda.
+          </p>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            {([
+              ['LINKEDIN', 'LinkedIn'],
+              ['INSTAGRAM', 'Instagram'],
+              ['GOOGLE', 'Gmail'],
+            ] as const).map(([id, etiqueta]) => (
+              <button
+                key={id}
+                type="button"
+                disabled={conectando !== null}
+                onClick={() => conectar(id)}
+                className="border border-linea-fuerte px-3 py-2 text-sm hover:border-tinta disabled:opacity-40"
+              >
+                {conectando === id ? 'Abriendo…' : `Conectar ${etiqueta}`}
+              </button>
+            ))}
+            <button
+              type="button"
+              disabled={sincronizando}
+              onClick={sincronizar}
+              className="ml-auto border border-linea-fuerte px-3 py-2 text-sm hover:border-tinta disabled:opacity-40"
+            >
+              {sincronizando ? 'Sincronizando…' : 'Sincronizar'}
+            </button>
+          </div>
+
+          <p className="mt-2 text-xs text-tenue">
+            Las cuentas nuevas entran <strong>en pausa</strong>. Conectar y empezar a escribir en
+            el mismo gesto es justo lo que no queremos.
           </p>
 
           <ul className="mt-3 space-y-4">

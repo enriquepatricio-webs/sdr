@@ -9,7 +9,7 @@
  *      de envío, un solo playbook activo) rechazan de verdad lo que deben.
  */
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { PGlite } from '@electric-sql/pglite'
 import { eq } from 'drizzle-orm'
@@ -26,7 +26,17 @@ import {
   settings,
 } from './schema'
 
-const MIGRATION = join(process.cwd(), 'drizzle', '0000_init.sql')
+/**
+ * TODAS las migraciones, en orden. No solo la primera: aplicar únicamente
+ * 0000 hacía que el esquema de las pruebas se quedase atrás respecto al de
+ * Drizzle, y el seed fallaba con un error de columna inexistente que parecía
+ * un fallo del seed y era del propio test.
+ */
+const DIR = join(process.cwd(), 'drizzle')
+const MIGRACIONES = readdirSync(DIR)
+  .filter((f) => f.endsWith('.sql'))
+  .sort()
+  .map((f) => join(DIR, f))
 
 const db = new PGlite()
 
@@ -61,10 +71,12 @@ async function rejects(on: PGlite, label: string, sql: string) {
 async function main() {
   /* ---- 1. La migración se aplica ---------------------------------------- */
 
-  const statements = readFileSync(MIGRATION, 'utf8')
-    .split('--> statement-breakpoint')
-    .map((s) => s.trim())
-    .filter(Boolean)
+  const statements = MIGRACIONES.flatMap((ruta) =>
+    readFileSync(ruta, 'utf8')
+      .split('--> statement-breakpoint')
+      .map((s) => s.trim())
+      .filter(Boolean),
+  )
 
   for (const [i, stmt] of statements.entries()) {
     try {
@@ -76,7 +88,9 @@ async function main() {
     }
   }
   passed++
-  console.log(`✓ migración aplicada (${statements.length} sentencias)`)
+  console.log(
+    `✓ ${MIGRACIONES.length} migración(es) aplicadas (${statements.length} sentencias)`,
+  )
 
   /* ---- 2. Está todo lo que el spec pide --------------------------------- */
 
@@ -84,7 +98,7 @@ async function main() {
     `select table_name from information_schema.tables where table_schema='public' order by 1`,
   )
   const names = tables.rows.map((r) => r.table_name)
-  await ok('11 tablas: las 9 del spec más las dos de prospección', async () =>
+  await ok('12 tablas: las 9 del spec, las dos de prospección y la de empresas', async () =>
     assert.deepEqual(names, [
       'accounts',
       'campaigns',
@@ -95,6 +109,7 @@ async function main() {
       'prospect_searches',
       'prospects',
       'run_logs',
+      'sellers',
       'settings',
       'touches',
     ]),

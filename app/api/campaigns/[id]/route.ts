@@ -13,6 +13,7 @@ const cuerpo = z.object({
   accountId: z.string().uuid().nullable(),
   playbookId: z.string().uuid().nullable(),
   icpId: z.string().uuid().nullable(),
+  sellerId: z.string().uuid().nullable().optional(),
   dailyCap: z.number().int().min(1).max(MAX_DAILY_LIMIT),
   maxTouches: z.number().int().min(1).max(10),
   followupDelays: z.array(z.number().int().min(1).max(90)).min(1),

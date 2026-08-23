@@ -39,6 +39,33 @@ export type QualificationCriterion = {
 
 export type Objection = { objection: string; response: string }
 
+/** Lo que sabemos del prospecto antes de escribirle. */
+export type Enrichment = {
+  /** Resumen listo para meter en el prompt. */
+  resumen: string
+  /** Texto crudo del perfil, si se pudo sacar. */
+  perfil?: string
+  /** Texto crudo de la web de su empresa. */
+  web?: string
+  /** De dónde salió cada cosa, para poder auditarlo. */
+  fuentes: string[]
+  costeUsd?: number
+}
+
+/**
+ * Lo que el sistema ha aprendido de sus propios resultados.
+ *
+ * NO son pesos de un modelo: son frases destiladas de datos reales
+ * (qué aperturas obtuvieron respuesta, cuáles no) que se inyectan en el prompt.
+ */
+export type Lecciones = {
+  funciona: string[]
+  noFunciona: string[]
+  /** Sobre cuántos mensajes se calculó. Sin volumen, no hay lección. */
+  basadoEn: number
+  actualizado: string
+}
+
 export type BookingRules = {
   /** Duración de la reunión en minutos. */
   duration_min: number
@@ -270,6 +297,35 @@ export const playbooks = pgTable(
   ],
 )
 
+/**
+ * La empresa para la que se vende.
+ *
+ * Existe aparte del playbook porque el playbook es el MÉTODO de venta y la
+ * empresa es el CONTEXTO. El mismo método sirve para varios clientes; lo que
+ * cambia es qué vende cada uno y qué se puede decir de él.
+ */
+export const sellers = pgTable(
+  'sellers',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    name: text('name').notNull(),
+    website: text('website'),
+    /** Lo que escribe el usuario a mano. Manda sobre lo scrapeado. */
+    context: text('context'),
+    /** Lo que se sacó de su web. Se regenera al pulsar "Leer mi web". */
+    scrapedContext: text('scraped_context'),
+    scrapedAt: timestamp('scraped_at', { withTimezone: true }),
+    /** Si se rellena, sustituye a la oferta del playbook para esta empresa. */
+    offer: text('offer'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [uniqueIndex('sellers_name_key').on(t.name)],
+)
+
 export const campaigns = pgTable(
   'campaigns',
   {
@@ -278,6 +334,8 @@ export const campaigns = pgTable(
     status: campaignStatusEnum('status').notNull().default('draft'),
     icpId: uuid('icp_id').references(() => icps.id, { onDelete: 'restrict' }),
     playbookId: uuid('playbook_id').references(() => playbooks.id, { onDelete: 'restrict' }),
+    /** Para quién se vende en esta campaña. */
+    sellerId: uuid('seller_id').references(() => sellers.id, { onDelete: 'restrict' }),
     accountId: uuid('account_id').references(() => accounts.id, { onDelete: 'restrict' }),
     channel: channelEnum('channel').notNull(),
     dailyCap: integer('daily_cap').notNull().default(DEFAULT_DAILY_LIMIT),
@@ -336,6 +394,13 @@ export const leads = pgTable(
     touchCount: integer('touch_count').notNull().default(0),
     nextActionAt: timestamp('next_action_at', { withTimezone: true }),
     raw: jsonb('raw').$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+    /**
+     * Lo que se averiguó del prospecto antes de escribirle: su perfil y la web
+     * de su empresa. Es la diferencia entre un mensaje genérico y uno que
+     * demuestra que te has mirado a quién escribes.
+     */
+    enrichment: jsonb('enrichment').$type<Enrichment>(),
+    enrichedAt: timestamp('enriched_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()

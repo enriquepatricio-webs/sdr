@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { asc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '@/lib/db'
-import { icps } from '@/lib/db/schema'
+import { icps, sellers } from '@/lib/db/schema'
 import { parseBody, serverError } from '@/lib/api'
 import { construirSystemPrompt } from '@/lib/agent-prompt'
 import { getSettings } from '@/lib/settings'
@@ -21,6 +21,7 @@ const cuerpo = z.object({
   bookingRules: z.any(),
   canal: z.enum(['linkedin', 'email', 'instagram']).default('linkedin'),
   icpId: z.string().uuid().optional(),
+  sellerId: z.string().uuid().optional(),
   /** Lo que diría el prospecto. */
   mensaje: z.string().min(1, 'Escribe lo que diría el prospecto.'),
   /** Turnos previos, para poder ensayar una conversación y no solo un mensaje. */
@@ -49,6 +50,10 @@ export async function POST(request: Request) {
       ? ((await db.select().from(icps).where(eq(icps.id, d.icpId)))[0] ?? null)
       : ((await db.select().from(icps).orderBy(asc(icps.createdAt)).limit(1))[0] ?? null)
 
+    const vendedora = d.sellerId
+      ? ((await db.select().from(sellers).where(eq(sellers.id, d.sellerId)))[0] ?? null)
+      : ((await db.select().from(sellers).orderBy(asc(sellers.createdAt)).limit(1))[0] ?? null)
+
     const systemPrompt = construirSystemPrompt(
       {
         systemPrompt: d.systemPrompt,
@@ -58,7 +63,14 @@ export async function POST(request: Request) {
         bookingRules: d.bookingRules,
       },
       icp,
-      { empresa: ajustes.companyName, canal: d.canal },
+      {
+        empresa: ajustes.companyName,
+        canal: d.canal,
+        vendedora,
+        // El ensayo incluye las lecciones: si no, probarías un agente distinto
+        // del que escribe de verdad.
+        lecciones: ajustes.lessons,
+      },
     )
 
     const resultado = await chat({

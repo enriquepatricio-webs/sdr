@@ -162,6 +162,70 @@ export async function listarMensajes(
 }
 
 /* -------------------------------------------------------------------------- */
+/* Conectar cuentas desde el dashboard                                         */
+/* -------------------------------------------------------------------------- */
+
+export type CuentaUnipile = {
+  id: string
+  type: string
+  name: string
+  created_at: string
+  sources?: { id: string; status: string }[]
+}
+
+/** Cuentas ya conectadas en Unipile. Se usa para sincronizarlas al dashboard. */
+export async function listarCuentas(): Promise<CuentaUnipile[]> {
+  const r = await pedir<{ items?: CuentaUnipile[] }>('/accounts?limit=100', { method: 'GET' })
+  return r.items ?? []
+}
+
+/**
+ * Genera el enlace del asistente de conexión de Unipile.
+ *
+ * Es la forma correcta de conectar una cuenta desde el dashboard: el usuario
+ * mete sus credenciales de LinkedIn o Instagram en la pantalla de Unipile, no
+ * en la nuestra. Nosotros nunca vemos ni almacenamos esa contraseña.
+ */
+export async function crearEnlaceDeConexion(opciones: {
+  proveedores: UnipileProvider[]
+  urlExito: string
+  urlFallo: string
+  urlAviso?: string
+  referencia?: string
+  minutosDeVida?: number
+}): Promise<{ url: string }> {
+  const { base } = configuracion()
+  const expira = new Date(Date.now() + (opciones.minutosDeVida ?? 30) * 60_000)
+
+  return pedir<{ url: string }>('/hosted/accounts/link', {
+    method: 'POST',
+    json: true,
+    body: JSON.stringify({
+      type: 'create',
+      providers: opciones.proveedores,
+      // Unipile necesita saber a qué instancia suya volver.
+      api_url: base.replace(/\/api\/v1$/, ''),
+      expiresOn: expira.toISOString(),
+      success_redirect_url: opciones.urlExito,
+      failure_redirect_url: opciones.urlFallo,
+      ...(opciones.urlAviso ? { notify_url: opciones.urlAviso } : {}),
+      ...(opciones.referencia ? { name: opciones.referencia } : {}),
+    }),
+  })
+}
+
+/** Tipo de cuenta de Unipile → canal nuestro. */
+export function canalDeProveedor(tipo: string): 'linkedin' | 'instagram' | 'email' | null {
+  const t = tipo.toUpperCase()
+  if (t === 'LINKEDIN') return 'linkedin'
+  if (t === 'INSTAGRAM') return 'instagram'
+  if (['GOOGLE', 'GOOGLE_OAUTH', 'MICROSOFT', 'OUTLOOK', 'IMAP', 'MAIL', 'ICLOUD'].includes(t)) {
+    return 'email'
+  }
+  return null
+}
+
+/* -------------------------------------------------------------------------- */
 /* Webhook de mensaje entrante                                                 */
 /* -------------------------------------------------------------------------- */
 

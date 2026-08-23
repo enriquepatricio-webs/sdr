@@ -4,7 +4,7 @@
  */
 import { inArray } from 'drizzle-orm'
 import { db } from './db'
-import { settings } from './db/schema'
+import { type Lecciones, settings } from './db/schema'
 
 export type Settings = {
   /** OFF por defecto. Con esto apagado el agente redacta pero no envía. */
@@ -29,6 +29,10 @@ export type Settings = {
   autoProspectMaxItems: number
   /** Score de ICP a partir del cual un candidato entra solo en la campaña. */
   autoProspectMinScore: number
+  /** Enriquecer el perfil y la web del prospecto antes de escribirle. */
+  enrichBeforeContact: boolean
+  /** Lo destilado de los resultados reales. null hasta que haya volumen. */
+  lessons: Lecciones | null
 }
 
 /**
@@ -45,6 +49,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autoProspectMaxSearchesPerDay: 4,
   autoProspectMaxItems: 50,
   autoProspectMinScore: 70,
+  enrichBeforeContact: true,
+  lessons: null,
 }
 
 const KEYS = {
@@ -57,6 +63,8 @@ const KEYS = {
   autoProspectMaxSearchesPerDay: 'auto_prospect_max_searches_per_day',
   autoProspectMaxItems: 'auto_prospect_max_items',
   autoProspectMinScore: 'auto_prospect_min_score',
+  enrichBeforeContact: 'enrich_before_contact',
+  lessons: 'lessons',
 } as const satisfies Record<keyof Settings, string>
 
 export async function getSettings(): Promise<Settings> {
@@ -84,6 +92,8 @@ export async function getSettings(): Promise<Settings> {
     autoProspectMaxSearchesPerDay: Number(read('autoProspectMaxSearchesPerDay')),
     autoProspectMaxItems: Number(read('autoProspectMaxItems')),
     autoProspectMinScore: Number(read('autoProspectMinScore')),
+    enrichBeforeContact: read('enrichBeforeContact') !== false,
+    lessons: (byKey.get(KEYS.lessons) as Lecciones | null) ?? null,
   }
 }
 

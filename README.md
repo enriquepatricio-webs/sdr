@@ -123,7 +123,16 @@ tiene que ser otro dominio propio, no una URL de Vercel.
 | `sdr-inbound` | webhook de Unipile | El principal. Descarta ecos y duplicados, carga el hilo y suelta al agente con sus seis herramientas. |
 | `sdr-followup` | 10:00 de L a V | Seguimientos vencidos, con el hilo previo delante para no repetirse. |
 
-### 4. Lo que falta por rellenar
+### 4. Conectar cuentas
+
+Desde `/settings` → **Conectar LinkedIn / Instagram / Gmail**. Se abre el
+asistente de Unipile: tus credenciales se meten allí, este dashboard no las ve
+ni las guarda. Al volver, **Sincronizar**.
+
+Las cuentas nuevas entran **en pausa**. Conectar una cuenta y que empiece a
+escribir a desconocidos en el mismo gesto es justo lo que no queremos.
+
+### 5. Lo que falta por rellenar
 
 | Variable | Estado | Por qué |
 |---|---|---|
@@ -142,7 +151,7 @@ Nada de esto bloquea a n8n: el agente ya funciona con el autopiloto apagado.
 `UNIPILE_DSN` solo hace falta cuando enciendas el autopiloto y empiece a enviar
 de verdad.
 
-### 5. Encender
+### 6. Encender
 
 En este orden, y no antes:
 
@@ -163,6 +172,7 @@ En este orden, y no antes:
 |---|---|
 | `/` | KPIs, embudo y **Parar todo** |
 | `/playbook` | El entrenamiento de ventas. Versionado, con botón Probar |
+| `/empresa` | Para quién vendes. Multi-empresa, con lectura de tu web |
 | `/icp` | A quién buscas y a quién descartas |
 | `/prospectar` | Buscar prospectos con IA vía Apify |
 | `/campaigns` | Cuenta, topes, ventana de envío, activar y pausar |
@@ -176,6 +186,35 @@ En `/playbook` escribes lo que diría el prospecto y ves la respuesta del agente
 con su coste y su latencia. **No envía nada.** Es el mismo montaje de prompt que
 usa n8n en producción: si fuera otro, estarías probando un agente distinto del
 que escribe a la gente.
+
+### Para quién vendes (multi-empresa)
+
+El playbook es el **método** de venta; `/empresa` es el **contexto**. El mismo
+método sirve para varios clientes: lo que cambia es qué vende cada uno. Cada
+campaña apunta a una empresa, y de ahí sale el `{{empresa}}` del playbook.
+
+Pones la web y **Leer mi web**: se lee y se guarda como contexto, aparte de lo
+que escribas tú. Si se contradicen, manda lo tuyo — por eso están separados.
+
+### Antes de escribir, se mira a quién
+
+Con el enriquecimiento activado (`/settings`), antes de redactar el primer toque
+el sistema lee el perfil del prospecto y la web de su empresa, y le pasa al
+agente un resumen. Es la diferencia entre «hola, vendemos X» y «vi que en Verto
+Ops todo el pipeline viene de referidos».
+
+Es de mejor esfuerzo: si una web no responde, se escribe con menos contexto en
+vez de bloquear el envío. Y lo leído se cachea dos semanas.
+
+### Aprender de los resultados
+
+El panel tiene **Analizar resultados**: compara los mensajes que obtuvieron
+respuesta con los que murieron en silencio, destila la diferencia en frases
+concretas y las mete en el prompt de todos los agentes.
+
+No reentrena ningún modelo, y **se niega a destilar nada por debajo de 30
+primeros toques**: con menos, la diferencia es ruido, y destilar ruido produce
+reglas con mucha seguridad y ningún fundamento.
 
 ### Que no se pare nunca
 
