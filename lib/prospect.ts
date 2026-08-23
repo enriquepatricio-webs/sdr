@@ -554,6 +554,14 @@ export function normalizarCandidato(
 
   const usuario = texto(raw.username, raw.ownerUsername, raw.userName);
   if (!usuario) return null;
+
+  /**
+   * El actor de Instagram devuelve filas de error para los perfiles que no pudo
+   * leer: `{error, errorDescription, url, username}` y nada más. Se colaban como
+   * candidatos con solo el nombre de usuario, se pagaba por puntuarlos y el
+   * modelo los tumbaba por falta de datos. No son candidatos: son fallos.
+   */
+  if (raw.error) return null;
   return {
     fullName: texto(raw.fullName, raw.name, raw.ownerFullName) ?? usuario,
     senales: [
