@@ -144,6 +144,53 @@ export type InvitacionEnviada = { invitation_id: string; usage?: number };
  * mensaje de ventas cortado a la mitad es peor que no enviarlo, y recortarlo en
  * silencio esconde un playbook que está generando mensajes demasiado largos.
  */
+/**
+ * Manda un mensaje a una conversación que ya existe, con o sin `chat_id`.
+ *
+ * El `chat_id` que Unipile devuelve al ABRIR un chat no sirve para escribir en
+ * él después: en cuanto la conversación existe de verdad responde 404 "Chat not
+ * found". Eso hacía que SOLO funcionara el primer mensaje a cada persona. El
+ * imán no podía mandar ni el recordatorio ni el recurso, y el seguimiento en
+ * frío tampoco podía mandar su segundo toque; en los dos sitios se veía como un
+ * 404 suelto que no decía nada.
+ *
+ * Se intenta por el hilo si lo hay, y si el hilo ya no existe se abre por el
+ * destinatario. En Instagram y LinkedIn no hay dos conversaciones con la misma
+ * persona, así que "abrir" cae en el mismo sitio: el mensaje aparece donde
+ * tiene que aparecer.
+ */
+export async function enviarEnConversacion(opciones: {
+  accountId: string;
+  providerId: string | null;
+  chatId: string | null;
+  texto: string;
+}): Promise<{ message_id: string; chat_id: string | null }> {
+  if (opciones.chatId) {
+    try {
+      const r = await enviarEnChat(opciones.chatId, opciones.texto);
+      return { message_id: r.message_id, chat_id: opciones.chatId };
+    } catch (err) {
+      const caducado =
+        err instanceof UnipileError &&
+        (err.status === 404 || err.body.includes("resource_not_found"));
+      if (!caducado || !opciones.providerId) throw err;
+    }
+  }
+
+  if (!opciones.providerId) {
+    throw new ErrorAntesDeEnviar(
+      "No hay ni hilo válido ni destinatario al que escribir.",
+    );
+  }
+
+  const r = await iniciarChat({
+    accountId: opciones.accountId,
+    attendeeId: opciones.providerId,
+    texto: opciones.texto,
+  });
+  return { message_id: r.message_id, chat_id: r.chat_id };
+}
+
 export async function invitar(opciones: {
   accountId: string;
   providerId: string;

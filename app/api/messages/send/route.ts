@@ -15,7 +15,7 @@ import {
   ErrorAntesDeEnviar,
   UnipileError,
   enviarCorreo,
-  enviarEnChat,
+  enviarEnConversacion,
   iniciarChat,
   identificadorDeUrlLinkedin,
   invitar,
@@ -294,8 +294,17 @@ export async function POST(request: Request) {
         });
         messageId = r.invitation_id;
       } else if (chatId) {
-        const r = await enviarEnChat(chatId, d.texto);
+        // No basta con `enviarEnChat`: el chat_id guardado caduca en cuanto la
+        // conversación existe de verdad, y entonces el segundo toque a esa
+        // persona devolvía 404 y se daba por fallido.
+        const r = await enviarEnConversacion({
+          accountId: cuenta.unipileAccountId,
+          providerId: lead.providerId,
+          chatId,
+          texto: d.texto,
+        });
         messageId = r.message_id;
+        chatId = r.chat_id;
       } else {
         /**
          * Instagram. El `provider_id` guardado NO sirve para abrir un chat.
@@ -376,6 +385,27 @@ export async function POST(request: Request) {
         chatId,
       });
     } catch (err) {
+      /**
+       * Falló ANTES de salir: no se ha enviado nada.
+       *
+       * Es distinto de que Unipile rechace un envío. Aquí el mensaje no ha
+       * llegado a la red, así que reintentar no puede duplicar nada: se borra
+       * el borrador y el lead vuelve a la cola sin gastar uno de sus tres
+       * intentos. `ErrorAntesDeEnviar` existía y se importaba aquí, pero no
+       * había nada que lo distinguiera, así que una nota demasiado larga
+       * quemaba al lead igual que un destinatario inexistente.
+       */
+      if (err instanceof ErrorAntesDeEnviar) {
+        await db.delete(touches).where(eq(touches.id, toque.id));
+        await db.insert(runLogs).values({
+          workflow: "sdr-envio",
+          leadId: lead.id,
+          level: "warn",
+          message: `No se llegó a enviar: ${err.message}`,
+        });
+        return jsonError(err.message, 422);
+      }
+
       // El toque se queda en 'fallido'. Nadie reintenta ESE envío.
       await db
         .update(touches)

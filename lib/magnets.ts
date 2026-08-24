@@ -28,7 +28,7 @@ import {
   touches,
 } from "./db/schema";
 import { ACTORES_LECTURA, runSync } from "./apify";
-import { enviarEnChat, iniciarChat, obtenerUsuario } from "./unipile";
+import { enviarEnConversacion, obtenerUsuario } from "./unipile";
 
 export type EstadoIman = (typeof magnetStateEnum.enumValues)[number];
 
@@ -662,19 +662,14 @@ export async function enviarDm(opciones: {
 
   // ---- 2. Enviar -----------------------------------------------------------
   try {
-    let chatId = opciones.chatId;
-    let messageId: string;
-    if (chatId) {
-      messageId = (await enviarEnChat(chatId, texto)).message_id;
-    } else {
-      const r = await iniciarChat({
-        accountId: cuenta.unipileAccountId,
-        attendeeId: opciones.providerId,
-        texto,
-      });
-      messageId = r.message_id;
-      chatId = r.chat_id;
-    }
+    const r = await enviarEnConversacion({
+      accountId: cuenta.unipileAccountId,
+      providerId: opciones.providerId,
+      chatId: opciones.chatId,
+      texto,
+    });
+    const messageId = r.message_id;
+    const chatId = r.chat_id;
 
     // ---- 3. Confirmar ------------------------------------------------------
     await db
