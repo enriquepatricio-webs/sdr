@@ -861,7 +861,14 @@ export async function contestoDespuesDePedirle(
     .select({ cuando: touches.createdAt })
     .from(touches)
     .where(
-      and(eq(touches.leadId, contacto.leadId), eq(touches.direction, "out")),
+      and(
+        eq(touches.leadId, contacto.leadId),
+        eq(touches.direction, "out"),
+        // Solo lo que SALIÓ. Un intento fallido no es haber hablado, y
+        // contarlo dejaba la respuesta de la otra persona por detrás de un
+        // mensaje que nunca vio.
+        eq(touches.status, "enviado"),
+      ),
     )
     .orderBy(desc(touches.createdAt))
     .limit(1);
