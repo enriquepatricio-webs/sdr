@@ -185,10 +185,43 @@ export function comentariosConLaClave(
 }
 
 /** Lee los comentarios de la publicación y se queda con los que piden el recurso. */
+/**
+ * Cuántos comentarios se piden en una relectura.
+ *
+ * El actor los devuelve ordenados por MÁS NUEVOS, así que pedir los últimos
+ * treinta basta para no perderse nada entre lectura y lectura, y hace que el
+ * coste NO crezca con el post: pedía doscientos, y en un post con doscientos
+ * comentarios cada relectura costaba doscientos resultados para descubrir los
+ * dos nuevos. Con lecturas cada pocos minutos eso son decenas de euros al día
+ * por imán.
+ */
+export const COMENTARIOS_POR_RELECTURA = 30;
+
+/** La primera vez sí se lee entero: el post puede llevar días publicado. */
+export const COMENTARIOS_PRIMERA_LECTURA = 200;
+
+/**
+ * Cada cuánto releer, según lo viejo que sea el imán.
+ *
+ * Los comentarios de un post de Instagram llegan casi todos en las primeras
+ * horas. Leer cada dos minutos para siempre es pagar todo el día por una curva
+ * que se apagó la primera tarde; leer cada hora siempre es hacer esperar una
+ * hora justo cuando más gente está comentando.
+ */
+export function minutosEntreLecturas(
+  creadoEn: Date,
+  ahora = new Date(),
+): number {
+  const horas = (ahora.getTime() - creadoEn.getTime()) / 3_600_000;
+  if (horas < 6) return 2;
+  if (horas < 48) return 15;
+  return 60;
+}
+
 export async function leerComentarios(
   postUrl: string,
   clave: string,
-  limite = 200,
+  limite = COMENTARIOS_POR_RELECTURA,
 ): Promise<ComentarioClave[]> {
   const items = await runSync<ComentarioApify>(
     ACTORES_LECTURA.comentariosInstagram,
@@ -253,13 +286,11 @@ export const RECORDATORIO_FOLLOW =
   "Gracias, pero todavía no me sale que me sigas. Dale a seguir y te lo mando al momento; si ya le has dado, dame un minuto y vuelve a escribirme.";
 
 /**
- * Cada cuánto se vuelve a leer la publicación buscando comentarios nuevos.
+ * El suelo de la cadencia de lectura, cuando el post ya no es noticia.
  *
- * El cron pasa cada 15 minutos, pero releer el post entero cada vez es pagar
- * por lo mismo noventa y seis veces al día: un imán vivo un mes son cientos de
- * miles de resultados de Apify para encontrar los pocos comentarios que hay.
- * Una hora es más que suficiente para un lead magnet, y entre lectura y lectura
- * el ciclo sigue haciendo avanzar a quien ya está en la cola.
+ * Lo decide `minutosEntreLecturas`, que empieza en dos minutos y va aflojando:
+ * un lead magnet se juega casi todo en las primeras horas, y una hora de espera
+ * justo entonces es la diferencia entre parecer instantáneo y parecer roto.
  */
 export const COMENTARIOS_CADA_MIN = 60;
 
@@ -931,6 +962,12 @@ export async function ejecutarCiclo(
    * `last_checked_at` hace de arrendamiento: solo entra quien consigue moverlo,
    * y como el UPDATE es condicional esa carrera la gana uno solo. Si el ciclo se
    * cae a mitad, el arrendamiento caduca en cinco minutos.
+   *
+   * Al terminar se SUELTA. Antes no, y esos cinco minutos funcionaban como un
+   * intervalo mínimo entre ciclos: un mensaje entrante que quisiera hacer
+   * avanzar a alguien justo después del cron se encontraba la puerta cerrada y
+   * había que esperar. El arrendamiento es para que no corran dos a la vez, no
+   * para espaciarlos.
    */
   const [turno] = await db
     .update(leadMagnets)
@@ -960,46 +997,36 @@ export async function ejecutarCiclo(
     };
   }
 
-  const ajustes = await ajustesEfectivos(iman.workspaceId);
+  try {
+    const ajustes = await ajustesEfectivos(iman.workspaceId);
 
-  /* ---- 1. Comentarios nuevos, como mucho una vez por hora -------------- */
-  const tocaLeer =
-    !iman.comentariosLeidosAt ||
-    Date.now() - iman.comentariosLeidosAt.getTime() >
-      COMENTARIOS_CADA_MIN * 60_000;
+    /* ---- 1. Comentarios nuevos, como mucho una vez por hora -------------- */
+    const primeraVez = !iman.comentariosLeidosAt;
+    const tocaLeer =
+      primeraVez ||
+      Date.now() - iman.comentariosLeidosAt!.getTime() >
+        minutosEntreLecturas(iman.createdAt) * 60_000;
 
-  let comentarios: ComentarioClave[] = [];
-  let nuevos = 0;
-  if (tocaLeer) {
-    comentarios = await leerComentarios(iman.postUrl, iman.keyword);
-    nuevos = await registrarComentarios(iman.id, comentarios);
-    await db
-      .update(leadMagnets)
-      .set({ comentariosLeidosAt: new Date() })
-      .where(eq(leadMagnets.id, iman.id));
-  }
+    let comentarios: ComentarioClave[] = [];
+    let nuevos = 0;
+    if (tocaLeer) {
+      comentarios = await leerComentarios(
+        iman.postUrl,
+        iman.keyword,
+        primeraVez ? COMENTARIOS_PRIMERA_LECTURA : COMENTARIOS_POR_RELECTURA,
+      );
+      nuevos = await registrarComentarios(iman.id, comentarios);
+      await db
+        .update(leadMagnets)
+        .set({ comentariosLeidosAt: new Date() })
+        .where(eq(leadMagnets.id, iman.id));
+    }
 
-  /* ---- 1 bis. Seguidores: solo si hay alguien esperando verificación ---- */
-  // Refrescar por refrescar es pagar un scraping para responder a una pregunta
-  // que nadie ha hecho.
-  const [{ n: esperando } = { n: 0 }] = await db
-    .select({ n: count() })
-    .from(magnetContacts)
-    .where(
-      and(
-        eq(magnetContacts.magnetId, iman.id),
-        eq(magnetContacts.state, "pidiendo_follow"),
-      ),
-    );
-
-  if (Number(esperando) > 0) {
-    /**
-     * Si alguno de los que esperan ha contestado, la caché tiene que estar
-     * fresca de verdad: esa persona está delante de la pantalla esperando lo
-     * que le hemos prometido "ahora mismo".
-     */
-    const enEspera = await db
-      .select()
+    /* ---- 1 bis. Seguidores: solo si hay alguien esperando verificación ---- */
+    // Refrescar por refrescar es pagar un scraping para responder a una pregunta
+    // que nadie ha hecho.
+    const [{ n: esperando } = { n: 0 }] = await db
+      .select({ n: count() })
       .from(magnetContacts)
       .where(
         and(
@@ -1007,265 +1034,297 @@ export async function ejecutarCiclo(
           eq(magnetContacts.state, "pidiendo_follow"),
         ),
       );
-    let alguienContesto = false;
-    for (const c of enEspera) {
-      if (await contestoDespuesDePedirle(c)) {
-        alguienContesto = true;
-        break;
-      }
-    }
 
-    const cacheados = await refrescarSiHaceFalta(
-      cuenta.id,
-      alguienContesto
-        ? SEGUIDORES_FRESCOS_SI_CONTESTAN_MIN
-        : SEGUIDORES_FRESCOS_MIN,
-    );
-    if (cacheados === 0) {
-      await db.insert(runLogs).values({
-        workflow: "iman",
-        level: "warn",
-        message: `No se pudo leer la lista de seguidores de "${cuenta.displayName}". Nadie pasará de "pidiendo_follow" hasta que se lea.`,
-        payload: { magnetId: iman.id, accountId: cuenta.id },
-      });
-    }
-  }
-
-  /* ---- 2. Cuánto se puede escribir ------------------------------------ */
-  const enviados = await enviosRecientes(cuenta.id);
-  const cupo = calcularCupo({
-    topeDiarioCuenta: cuenta.dailyLimit,
-    // Un imán no tiene tope propio: el de la cuenta es el que manda, y en
-    // Instagram el que de verdad frena es el horario (8/h por defecto).
-    topeDiarioCampana: cuenta.dailyLimit,
-    topeHorarioCuenta: cuenta.hourlyLimit,
-    enviadosHoyCuenta: enviados.dia,
-    enviadosHoyCampana: enviados.dia,
-    enviadosEstaHoraCuenta: enviados.hora,
-    lote: LOTE,
-  });
-
-  let presupuesto = cupo.hay ? cupo.cuantos : 0;
-  const resumen = {
-    comentariosConLaClave: comentarios.length,
-    contactosNuevos: nuevos,
-    peticionesDeFollow: 0,
-    verificados: 0,
-    entregados: 0,
-    enConversacion: 0,
-    descartados: 0,
-    borradores: 0,
-    sinCupo: cupo.hay ? null : { motivo: cupo.motivo, detalle: cupo.detalle },
-  };
-
-  /* ---- 2 bis. La ventana de envío también vale para el imán ------------ */
-  // Sin esto el cron manda DMs a las cuatro de la mañana y en fin de semana:
-  // solo miraba el cupo, que no sabe nada de horas decentes.
-  const [campana] = await db
-    .select({ ventana: campaigns.sendingWindow })
-    .from(campaigns)
-    .where(eq(campaigns.id, await campanaDelIman(iman)));
-
-  const fuera = campana ? fueraDeVentana(campana.ventana, new Date()) : null;
-  if (fuera) {
-    return {
-      ...resumen,
-      sinCupo: { motivo: "fuera_de_ventana", detalle: fuera },
-    };
-  }
-
-  /* ---- 3. Avanzar a cada uno un paso ---------------------------------- */
-  for (const contacto of await contactosPendientes(iman.id, LOTE)) {
-    try {
-      // Si en algún momento pidió que le dejaran en paz, se para aquí y no
-      // recibe nada más, ni una despedida.
-      //
-      // Va ANTES de la rama de `pidiendo_follow`: estaba después, y como esa
-      // rama termina siempre en `continue`, a quien decía "no me escribas"
-      // mientras esperaba el follow no se le hacía ni caso.
-      if (
-        contacto.unipileChatId &&
-        (await pidioQueLeDejen(contacto.unipileChatId))
-      ) {
-        if (await moverA(contacto, "descartado")) {
-          resumen.descartados++;
-          // Y el LEAD también: si solo se marca el contacto, el agente de
-          // conversaciones entrantes sigue viendo un lead activo y le contesta al
-          // que acaba de pedir que le dejen en paz.
-          if (contacto.leadId) {
-            await db
-              .update(leads)
-              .set({ status: "no_interesado", nextActionAt: null })
-              .where(eq(leads.id, contacto.leadId));
-          }
+    if (Number(esperando) > 0) {
+      /**
+       * Si alguno de los que esperan ha contestado, la caché tiene que estar
+       * fresca de verdad: esa persona está delante de la pantalla esperando lo
+       * que le hemos prometido "ahora mismo".
+       */
+      const enEspera = await db
+        .select()
+        .from(magnetContacts)
+        .where(
+          and(
+            eq(magnetContacts.magnetId, iman.id),
+            eq(magnetContacts.state, "pidiendo_follow"),
+          ),
+        );
+      let alguienContesto = false;
+      for (const c of enEspera) {
+        if (await contestoDespuesDePedirle(c)) {
+          alguienContesto = true;
+          break;
         }
-        continue;
       }
 
-      // Pasar de `pidiendo_follow` a `verificado` no manda nada, así que se hace
-      // aunque no quede cupo: es lo que deja la cola lista para la hora siguiente.
-      if (contacto.state === "pidiendo_follow") {
-        if (await verificarSigue(cuenta.id, contacto.username)) {
-          if (await moverA(contacto, "verificado", { verifiedAt: new Date() }))
-            resumen.verificados++;
-          continue;
-        }
-
-        /**
-         * No sigue. Si ha contestado, hay que decírselo.
-         *
-         * Antes esto era un `continue` a secas y quien escribía "Ya está" sin
-         * haber seguido se quedaba en silencio para siempre. Desde el otro lado
-         * eso es indistinguible de un bot roto.
-         */
-        if (
-          presupuesto > 0 &&
-          contacto.leadId &&
-          contacto.providerId &&
-          contacto.followAsks < MAX_PETICIONES_DE_FOLLOW &&
-          (await contestoDespuesDePedirle(contacto))
-        ) {
-          presupuesto--;
-          const aviso = await enviarDm({
-            leadId: contacto.leadId,
-            cuenta,
-            providerId: contacto.providerId,
-            chatId: contacto.unipileChatId,
-            texto: RECORDATORIO_FOLLOW,
-            paso: PASO_RECORDATORIO,
-            autopilot: ajustes.autopilot,
-          });
-          if (aviso.enviado) {
-            await db
-              .update(magnetContacts)
-              .set({ followAsks: contacto.followAsks + 1 })
-              .where(eq(magnetContacts.id, contacto.id));
-            resumen.peticionesDeFollow++;
-          } else if (aviso.motivo === "autopiloto_apagado") {
-            resumen.borradores++;
-          }
-        }
-        continue;
-      }
-
-      if (presupuesto <= 0) continue;
-      if (contacto.state === "entregado" && !iman.pitchMeeting) continue;
-
-      const identidad = await asegurarLead(iman, contacto, cuenta);
-      if (identidad && (await yaEscritoHoy(cuenta.id, identidad.providerId))) {
-        // Esta persona ya ha recibido algo por esta cuenta hoy: otro imán sobre
-        // otro post, o la campaña en frío de la misma cuenta. En Instagram el
-        // hilo es único, así que sería el mismo chat recibiendo dos secuencias.
-        continue;
-      }
-      if (!identidad) {
+      const cacheados = await refrescarSiHaceFalta(
+        cuenta.id,
+        alguienContesto
+          ? SEGUIDORES_FRESCOS_SI_CONTESTAN_MIN
+          : SEGUIDORES_FRESCOS_MIN,
+      );
+      if (cacheados === 0) {
         await db.insert(runLogs).values({
           workflow: "iman",
           level: "warn",
-          message: `No se pudo resolver @${contacto.username} en Instagram. Se queda en "${contacto.state}".`,
+          message: `No se pudo leer la lista de seguidores de "${cuenta.displayName}". Nadie pasará de "pidiendo_follow" hasta que se lea.`,
+          payload: { magnetId: iman.id, accountId: cuenta.id },
+        });
+      }
+    }
+
+    /* ---- 2. Cuánto se puede escribir ------------------------------------ */
+    const enviados = await enviosRecientes(cuenta.id);
+    const cupo = calcularCupo({
+      topeDiarioCuenta: cuenta.dailyLimit,
+      // Un imán no tiene tope propio: el de la cuenta es el que manda, y en
+      // Instagram el que de verdad frena es el horario (8/h por defecto).
+      topeDiarioCampana: cuenta.dailyLimit,
+      topeHorarioCuenta: cuenta.hourlyLimit,
+      enviadosHoyCuenta: enviados.dia,
+      enviadosHoyCampana: enviados.dia,
+      enviadosEstaHoraCuenta: enviados.hora,
+      lote: LOTE,
+    });
+
+    let presupuesto = cupo.hay ? cupo.cuantos : 0;
+    const resumen = {
+      comentariosConLaClave: comentarios.length,
+      contactosNuevos: nuevos,
+      peticionesDeFollow: 0,
+      verificados: 0,
+      entregados: 0,
+      enConversacion: 0,
+      descartados: 0,
+      borradores: 0,
+      sinCupo: cupo.hay ? null : { motivo: cupo.motivo, detalle: cupo.detalle },
+    };
+
+    /* ---- 2 bis. La ventana de envío también vale para el imán ------------ */
+    // Sin esto el cron manda DMs a las cuatro de la mañana y en fin de semana:
+    // solo miraba el cupo, que no sabe nada de horas decentes.
+    const [campana] = await db
+      .select({ ventana: campaigns.sendingWindow })
+      .from(campaigns)
+      .where(eq(campaigns.id, await campanaDelIman(iman)));
+
+    const fuera = campana ? fueraDeVentana(campana.ventana, new Date()) : null;
+    if (fuera) {
+      return {
+        ...resumen,
+        sinCupo: { motivo: "fuera_de_ventana", detalle: fuera },
+      };
+    }
+
+    /* ---- 3. Avanzar a cada uno un paso ---------------------------------- */
+    for (const contacto of await contactosPendientes(iman.id, LOTE)) {
+      try {
+        // Si en algún momento pidió que le dejaran en paz, se para aquí y no
+        // recibe nada más, ni una despedida.
+        //
+        // Va ANTES de la rama de `pidiendo_follow`: estaba después, y como esa
+        // rama termina siempre en `continue`, a quien decía "no me escribas"
+        // mientras esperaba el follow no se le hacía ni caso.
+        if (
+          contacto.unipileChatId &&
+          (await pidioQueLeDejen(contacto.unipileChatId))
+        ) {
+          if (await moverA(contacto, "descartado")) {
+            resumen.descartados++;
+            // Y el LEAD también: si solo se marca el contacto, el agente de
+            // conversaciones entrantes sigue viendo un lead activo y le contesta al
+            // que acaba de pedir que le dejen en paz.
+            if (contacto.leadId) {
+              await db
+                .update(leads)
+                .set({ status: "no_interesado", nextActionAt: null })
+                .where(eq(leads.id, contacto.leadId));
+            }
+          }
+          continue;
+        }
+
+        // Pasar de `pidiendo_follow` a `verificado` no manda nada, así que se hace
+        // aunque no quede cupo: es lo que deja la cola lista para la hora siguiente.
+        if (contacto.state === "pidiendo_follow") {
+          if (await verificarSigue(cuenta.id, contacto.username)) {
+            if (
+              await moverA(contacto, "verificado", { verifiedAt: new Date() })
+            )
+              resumen.verificados++;
+            continue;
+          }
+
+          /**
+           * No sigue. Si ha contestado, hay que decírselo.
+           *
+           * Antes esto era un `continue` a secas y quien escribía "Ya está" sin
+           * haber seguido se quedaba en silencio para siempre. Desde el otro lado
+           * eso es indistinguible de un bot roto.
+           */
+          if (
+            presupuesto > 0 &&
+            contacto.leadId &&
+            contacto.providerId &&
+            contacto.followAsks < MAX_PETICIONES_DE_FOLLOW &&
+            (await contestoDespuesDePedirle(contacto))
+          ) {
+            presupuesto--;
+            const aviso = await enviarDm({
+              leadId: contacto.leadId,
+              cuenta,
+              providerId: contacto.providerId,
+              chatId: contacto.unipileChatId,
+              texto: RECORDATORIO_FOLLOW,
+              paso: PASO_RECORDATORIO,
+              autopilot: ajustes.autopilot,
+            });
+            if (aviso.enviado) {
+              await db
+                .update(magnetContacts)
+                .set({ followAsks: contacto.followAsks + 1 })
+                .where(eq(magnetContacts.id, contacto.id));
+              resumen.peticionesDeFollow++;
+            } else if (aviso.motivo === "autopiloto_apagado") {
+              resumen.borradores++;
+            }
+          }
+          continue;
+        }
+
+        if (presupuesto <= 0) continue;
+        if (contacto.state === "entregado" && !iman.pitchMeeting) continue;
+
+        const identidad = await asegurarLead(iman, contacto, cuenta);
+        if (
+          identidad &&
+          (await yaEscritoHoy(cuenta.id, identidad.providerId))
+        ) {
+          // Esta persona ya ha recibido algo por esta cuenta hoy: otro imán sobre
+          // otro post, o la campaña en frío de la misma cuenta. En Instagram el
+          // hilo es único, así que sería el mismo chat recibiendo dos secuencias.
+          continue;
+        }
+        if (!identidad) {
+          await db.insert(runLogs).values({
+            workflow: "iman",
+            level: "warn",
+            message: `No se pudo resolver @${contacto.username} en Instagram. Se queda en "${contacto.state}".`,
+            payload: { magnetId: iman.id, contactId: contacto.id },
+          });
+          continue;
+        }
+
+        const paso =
+          PASO_DE_ESTADO[contacto.state as keyof typeof PASO_DE_ESTADO];
+        const yaHecho = await toqueDelPaso(identidad.leadId, paso);
+
+        // Un borrador sin aprobar (autopiloto apagado) o un envío que falló se
+        // quedan como están: repetir cualquiera de los dos duplicaría el mensaje.
+        if (yaHecho && yaHecho.status !== "enviado") continue;
+
+        let envio: {
+          enviado: boolean;
+          motivo?: string;
+          chatId?: string | null;
+        };
+        if (yaHecho) {
+          // El mensaje salió (lo aprobó una persona en la bandeja de borradores).
+          // El paso está hecho aunque no lo enviara este ciclo, así que avanza.
+          envio = { enviado: true, chatId: yaHecho.unipileChatId };
+        } else {
+          const texto =
+            contacto.state === "detectado"
+              ? iman.followMessage
+              : contacto.state === "verificado"
+                ? iman.resource
+                : PITCH_REUNION;
+
+          presupuesto--;
+          envio = await enviarDm({
+            leadId: identidad.leadId,
+            cuenta,
+            providerId: identidad.providerId,
+            chatId: contacto.unipileChatId,
+            texto,
+            paso,
+            autopilot: ajustes.autopilot,
+          });
+        }
+
+        if (!envio.enviado) {
+          if (envio.motivo === "autopiloto_apagado") resumen.borradores++;
+          continue;
+        }
+
+        const chat = { unipileChatId: envio.chatId ?? contacto.unipileChatId };
+        if (contacto.state === "detectado") {
+          if (
+            await moverA(contacto, "pidiendo_follow", {
+              ...chat,
+              followAsks: contacto.followAsks + 1,
+            })
+          ) {
+            resumen.peticionesDeFollow++;
+          }
+        } else if (contacto.state === "verificado") {
+          if (
+            await moverA(contacto, "entregado", {
+              ...chat,
+              deliveredAt: new Date(),
+            })
+          ) {
+            resumen.entregados++;
+          }
+        } else if (await moverA(contacto, "en_conversacion", chat)) {
+          resumen.enConversacion++;
+        }
+      } catch (err) {
+        /**
+         * Un contacto que revienta no puede llevarse el ciclo por delante.
+         *
+         * `contactosPendientes` ordena por antigüedad, así que un usuario
+         * irresoluble —cuenta borrada, handle cambiado, chat que ya no existe—
+         * salía el primero, lanzaba la excepción y abortaba la vuelta entera.
+         * Cada quince minutos, para siempre, y nadie detrás de él recibía nada.
+         */
+        const detalle = err instanceof Error ? err.message : String(err);
+        const intentos = contacto.intentos + 1;
+        const rendirse = intentos >= MAX_INTENTOS;
+
+        await db
+          .update(magnetContacts)
+          .set({
+            intentos,
+            ...(rendirse ? { state: "descartado" as const } : {}),
+          })
+          .where(eq(magnetContacts.id, contacto.id));
+
+        await db.insert(runLogs).values({
+          workflow: "iman",
+          level: rendirse ? "error" : "warn",
+          message: rendirse
+            ? `@${contacto.username} ha fallado ${intentos} veces y se descarta: ${detalle}`
+            : `@${contacto.username} falló (intento ${intentos}): ${detalle}`,
           payload: { magnetId: iman.id, contactId: contacto.id },
         });
-        continue;
+        if (rendirse) resumen.descartados++;
       }
-
-      const paso =
-        PASO_DE_ESTADO[contacto.state as keyof typeof PASO_DE_ESTADO];
-      const yaHecho = await toqueDelPaso(identidad.leadId, paso);
-
-      // Un borrador sin aprobar (autopiloto apagado) o un envío que falló se
-      // quedan como están: repetir cualquiera de los dos duplicaría el mensaje.
-      if (yaHecho && yaHecho.status !== "enviado") continue;
-
-      let envio: { enviado: boolean; motivo?: string; chatId?: string | null };
-      if (yaHecho) {
-        // El mensaje salió (lo aprobó una persona en la bandeja de borradores).
-        // El paso está hecho aunque no lo enviara este ciclo, así que avanza.
-        envio = { enviado: true, chatId: yaHecho.unipileChatId };
-      } else {
-        const texto =
-          contacto.state === "detectado"
-            ? iman.followMessage
-            : contacto.state === "verificado"
-              ? iman.resource
-              : PITCH_REUNION;
-
-        presupuesto--;
-        envio = await enviarDm({
-          leadId: identidad.leadId,
-          cuenta,
-          providerId: identidad.providerId,
-          chatId: contacto.unipileChatId,
-          texto,
-          paso,
-          autopilot: ajustes.autopilot,
-        });
-      }
-
-      if (!envio.enviado) {
-        if (envio.motivo === "autopiloto_apagado") resumen.borradores++;
-        continue;
-      }
-
-      const chat = { unipileChatId: envio.chatId ?? contacto.unipileChatId };
-      if (contacto.state === "detectado") {
-        if (
-          await moverA(contacto, "pidiendo_follow", {
-            ...chat,
-            followAsks: contacto.followAsks + 1,
-          })
-        ) {
-          resumen.peticionesDeFollow++;
-        }
-      } else if (contacto.state === "verificado") {
-        if (
-          await moverA(contacto, "entregado", {
-            ...chat,
-            deliveredAt: new Date(),
-          })
-        ) {
-          resumen.entregados++;
-        }
-      } else if (await moverA(contacto, "en_conversacion", chat)) {
-        resumen.enConversacion++;
-      }
-    } catch (err) {
-      /**
-       * Un contacto que revienta no puede llevarse el ciclo por delante.
-       *
-       * `contactosPendientes` ordena por antigüedad, así que un usuario
-       * irresoluble —cuenta borrada, handle cambiado, chat que ya no existe—
-       * salía el primero, lanzaba la excepción y abortaba la vuelta entera.
-       * Cada quince minutos, para siempre, y nadie detrás de él recibía nada.
-       */
-      const detalle = err instanceof Error ? err.message : String(err);
-      const intentos = contacto.intentos + 1;
-      const rendirse = intentos >= MAX_INTENTOS;
-
-      await db
-        .update(magnetContacts)
-        .set({
-          intentos,
-          ...(rendirse ? { state: "descartado" as const } : {}),
-        })
-        .where(eq(magnetContacts.id, contacto.id));
-
-      await db.insert(runLogs).values({
-        workflow: "iman",
-        level: rendirse ? "error" : "warn",
-        message: rendirse
-          ? `@${contacto.username} ha fallado ${intentos} veces y se descarta: ${detalle}`
-          : `@${contacto.username} falló (intento ${intentos}): ${detalle}`,
-        payload: { magnetId: iman.id, contactId: contacto.id },
-      });
-      if (rendirse) resumen.descartados++;
     }
-  }
 
-  await db.insert(runLogs).values({
-    workflow: "iman",
-    level: "info",
-    message: `Ciclo del imán "${iman.name}": ${resumen.contactosNuevos} nuevos, ${resumen.entregados} entregados.`,
-    payload: { magnetId: iman.id, ...resumen },
-  });
-  return resumen;
+    await db.insert(runLogs).values({
+      workflow: "iman",
+      level: "info",
+      message: `Ciclo del imán "${iman.name}": ${resumen.contactosNuevos} nuevos, ${resumen.entregados} entregados.`,
+      payload: { magnetId: iman.id, ...resumen },
+    });
+    return resumen;
+  } finally {
+    // Se suelta pase lo que pase, incluido el `return` de "fuera de ventana".
+    await db
+      .update(leadMagnets)
+      .set({ lastCheckedAt: null })
+      .where(eq(leadMagnets.id, iman.id));
+  }
 }

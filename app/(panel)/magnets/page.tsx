@@ -1,23 +1,30 @@
-import { and, asc, count, desc, eq, inArray } from 'drizzle-orm'
-import { db } from '@/lib/db'
-import { accounts, leadMagnets, magnetContacts, magnetStateEnum } from '@/lib/db/schema'
-import { ajustesEfectivos, workspaceActivo } from '@/lib/workspace'
-import { Imanes } from './imanes'
+import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
+import { db } from "@/lib/db";
+import {
+  accounts,
+  leadMagnets,
+  magnetContacts,
+  magnetStateEnum,
+} from "@/lib/db/schema";
+import { ajustesEfectivos, workspaceActivo } from "@/lib/workspace";
+import { Imanes } from "./imanes";
 
-export const dynamic = 'force-dynamic'
+export const dynamic = "force-dynamic";
 
 export default async function PaginaImanes() {
   // La empresa que el usuario tiene seleccionada en la cabecera, no siempre la
   // primera: un imán cuelga de una cuenta de Instagram concreta.
-  const ws = await workspaceActivo()
-  const ajustes = await ajustesEfectivos(ws?.id)
+  const ws = await workspaceActivo();
+  const ajustes = await ajustesEfectivos(ws?.id);
 
   if (!ws) {
     return (
       <div className="border border-dashed border-linea-fuerte p-10 text-center">
-        <p className="text-sm text-tenue">Da de alta una empresa antes de crear un imán.</p>
+        <p className="text-sm text-tenue">
+          Da de alta una empresa antes de crear un imán.
+        </p>
       </div>
-    )
+    );
   }
 
   const [imanes, cuentas] = await Promise.all([
@@ -28,17 +35,30 @@ export default async function PaginaImanes() {
       .where(eq(leadMagnets.workspaceId, ws.id))
       .orderBy(asc(leadMagnets.createdAt)),
     db
-      .select({ id: accounts.id, displayName: accounts.displayName, status: accounts.status })
+      .select({
+        id: accounts.id,
+        displayName: accounts.displayName,
+        status: accounts.status,
+      })
       .from(accounts)
-      .where(and(eq(accounts.provider, 'instagram'), eq(accounts.workspaceId, ws.id)))
+      .where(
+        and(
+          eq(accounts.provider, "instagram"),
+          eq(accounts.workspaceId, ws.id),
+        ),
+      )
       .orderBy(asc(accounts.createdAt)),
-  ])
+  ]);
 
-  const ids = imanes.map((f) => f.iman.id)
+  const ids = imanes.map((f) => f.iman.id);
   const [conteos, contactos] = ids.length
     ? await Promise.all([
         db
-          .select({ magnetId: magnetContacts.magnetId, state: magnetContacts.state, n: count() })
+          .select({
+            magnetId: magnetContacts.magnetId,
+            state: magnetContacts.state,
+            n: count(),
+          })
           .from(magnetContacts)
           .where(inArray(magnetContacts.magnetId, ids))
           .groupBy(magnetContacts.magnetId, magnetContacts.state),
@@ -55,7 +75,7 @@ export default async function PaginaImanes() {
           .orderBy(desc(magnetContacts.createdAt))
           .limit(300),
       ])
-    : [[], []]
+    : [[], []];
 
   return (
     <Imanes
@@ -70,14 +90,16 @@ export default async function PaginaImanes() {
         postUrl: iman.postUrl,
         active: iman.active,
         cuenta,
-        lastCheckedAt: iman.lastCheckedAt?.toISOString() ?? null,
+        lastCheckedAt: iman.comentariosLeidosAt?.toISOString() ?? null,
         porEstado: Object.fromEntries(
-          conteos.filter((c) => c.magnetId === iman.id).map((c) => [c.state, Number(c.n)]),
+          conteos
+            .filter((c) => c.magnetId === iman.id)
+            .map((c) => [c.state, Number(c.n)]),
         ),
         contactos: contactos
           .filter((c) => c.magnetId === iman.id)
           .map((c) => ({ id: c.id, username: c.username, state: c.state })),
       }))}
     />
-  )
+  );
 }

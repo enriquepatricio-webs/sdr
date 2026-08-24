@@ -8,6 +8,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  COMENTARIOS_POR_RELECTURA,
+  COMENTARIOS_PRIMERA_LECTURA,
   MAX_PETICIONES_DE_FOLLOW,
   PASO_DE_ESTADO,
   PASO_RECORDATORIO,
@@ -16,6 +18,7 @@ import {
   SEGUIDORES_FRESCOS_SI_CONTESTAN_MIN,
   TRANSICIONES,
   comentariosConLaClave,
+  minutosEntreLecturas,
   mencionaClave,
   normalizar,
   normalizarUsuario,
@@ -210,6 +213,27 @@ test("el recordatorio del follow sale una sola vez y sin dinero", () => {
   assert.ok(
     !Object.values(PASO_DE_ESTADO).includes(PASO_RECORDATORIO as never),
   );
+});
+
+test("se lee deprisa cuando el post es nuevo y se afloja despues", () => {
+  const ahora = new Date("2026-08-24T18:00:00Z");
+  const hace = (h: number) => new Date(ahora.getTime() - h * 3_600_000);
+
+  // Las primeras horas es cuando llega casi todo el mundo.
+  assert.equal(minutosEntreLecturas(hace(0), ahora), 2);
+  assert.equal(minutosEntreLecturas(hace(5), ahora), 2);
+  // Despues ya no compensa pagar un scraping cada dos minutos.
+  assert.equal(minutosEntreLecturas(hace(7), ahora), 15);
+  assert.equal(minutosEntreLecturas(hace(60), ahora), 60);
+
+  // Nunca cero: eso seria leer en cada vuelta del cron pase lo que pase.
+  for (const h of [0, 6, 48, 500]) {
+    assert.ok(minutosEntreLecturas(hace(h), ahora) > 0);
+  }
+
+  // Y la relectura tiene que pedir bastante menos que la primera, o el coste
+  // vuelve a crecer con el tamaño del post en cada vuelta.
+  assert.ok(COMENTARIOS_POR_RELECTURA < COMENTARIOS_PRIMERA_LECTURA);
 });
 
 test("a quien contesta se le mira la lista de seguidores de verdad", () => {
