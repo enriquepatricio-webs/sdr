@@ -21,6 +21,7 @@ import {
 } from "@/lib/db/schema";
 import { serverError } from "@/lib/api";
 import {
+  fraccionDeVentana,
   fueraDeVentana,
   inicioDeLaHoraLocal,
   inicioDelDiaLocal,
@@ -59,6 +60,7 @@ type Motivo =
   | "tope_diario_cuenta"
   | "tope_diario_campana"
   | "tope_horario"
+  | "ritmo"
   | "sin_leads_pendientes";
 
 export async function GET(request: Request) {
@@ -204,14 +206,21 @@ export async function GET(request: Request) {
         enviadosHoyCuenta: Number(conteo?.diaCuenta ?? 0) + yaRepartido,
         enviadosHoyCampana: Number(conteo?.diaCampana ?? 0),
         enviadosEstaHoraCuenta: Number(conteo?.hora ?? 0) + yaRepartido,
+        // Reparte el cupo del día a lo largo de la ventana en vez de gastarlo
+        // entero en la primera hora.
+        fraccionDeVentana: fraccionDeVentana(campana.sendingWindow, ahora),
         lote: limite - seleccionados.length,
       });
 
       if (!cupo.hay) {
         reintentos.push(
-          cupo.motivo === "tope_horario"
-            ? new Date(inicioHora.getTime() + 3600_000)
-            : proximaApertura(campana.sendingWindow, ahora),
+          cupo.motivo === "ritmo"
+            ? // El ritmo se libera solo con el paso del tiempo: basta con volver
+              // en la siguiente vuelta del cron.
+              new Date(ahora.getTime() + 15 * 60_000)
+            : cupo.motivo === "tope_horario"
+              ? new Date(inicioHora.getTime() + 3600_000)
+              : proximaApertura(campana.sendingWindow, ahora),
         );
         descartar(cupo.motivo, cupo.detalle);
         continue;

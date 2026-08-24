@@ -7,7 +7,7 @@
  */
 import assert from 'node:assert/strict'
 import type { SendingWindow } from './db/schema'
-import {
+import { fraccionDeVentana,
   dentroDeVentana,
   fueraDeVentana,
   inicioDeLaHoraLocal,
@@ -187,6 +187,38 @@ prueba('funciona igual en LATAM', () => {
   // 15:00 UTC = 09:00 en Ciudad de México.
   assert.equal(dentroDeVentana(mexico, new Date('2026-08-17T15:00:00Z')), true)
   assert.equal(dentroDeVentana(mexico, new Date('2026-08-17T14:00:00Z')), false)
+})
+
+/* ---- Fracción de la ventana ---------------------------------------------- */
+
+const jornada = { tz: 'Europe/Madrid', from: '09:00', to: '18:00', days: [1, 2, 3, 4, 5] }
+const enMadrid = (iso: string) => new Date(iso)
+
+prueba('antes de abrir es 0 y después de cerrar es 1', () => {
+  // 06:00 y 21:00 de Madrid en agosto (UTC+2).
+  assert.equal(fraccionDeVentana(jornada, enMadrid('2026-08-24T04:00:00Z')), 0)
+  assert.equal(fraccionDeVentana(jornada, enMadrid('2026-08-24T19:00:00Z')), 1)
+})
+
+prueba('a mitad de la jornada es la mitad', () => {
+  // 13:30 de Madrid es el punto medio de 09:00-18:00.
+  const f = fraccionDeVentana(jornada, enMadrid('2026-08-24T11:30:00Z'))
+  assert.ok(Math.abs(f - 0.5) < 0.01, `esperaba media jornada y salió ${f}`)
+})
+
+prueba('un día no laborable es 0 aunque sea media tarde', () => {
+  // Domingo: no está en days.
+  assert.equal(fraccionDeVentana(jornada, enMadrid('2026-08-23T12:00:00Z')), 0)
+})
+
+prueba('el cambio de hora no la descoloca', () => {
+  // 25 de octubre de 2026: Madrid pasa de UTC+2 a UTC+1 de madrugada.
+  // 13:30 locales siguen siendo media jornada, ahora a las 12:30 UTC.
+  const f = fraccionDeVentana(
+    { ...jornada, days: [1, 2, 3, 4, 5, 6, 7] },
+    enMadrid('2026-10-25T12:30:00Z'),
+  )
+  assert.ok(Math.abs(f - 0.5) < 0.01, `tras el cambio de hora salió ${f}`)
 })
 
 console.log(`\n${ok} comprobaciones correctas`)

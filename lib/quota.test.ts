@@ -131,6 +131,64 @@ prueba('el tope máximo del sistema sigue siendo 80', () => {
   assert.equal(c.hay && c.cuantos, 80)
 })
 
+/* ---- Ritmo: repartir el día, no vaciarlo de golpe ------------------------- */
+/* El usuario lo vio antes que ninguna prueba: "me estás enviando todos los
+   correos a la vez". El cupo diario estaba entero disponible desde que abría la
+   ventana. */
+
+const base = {
+  topeDiarioCuenta: 20,
+  topeDiarioCampana: 20,
+  topeHorarioCuenta: null,
+  enviadosHoyCuenta: 0,
+  enviadosHoyCampana: 0,
+  enviadosEstaHoraCuenta: 0,
+  lote: 25,
+}
+
+prueba('nada más abrir no se autoriza el día entero', () => {
+  const c = calcularCupo({ ...base, fraccionDeVentana: 0 })
+  assert.ok(c.hay)
+  assert.equal(c.cuantos, 1, 'al abrir la ventana se autorizaban más de un envío')
+})
+
+prueba('a media ventana está autorizada la mitad', () => {
+  const c = calcularCupo({ ...base, fraccionDeVentana: 0.5 })
+  assert.ok(c.hay)
+  assert.equal(c.cuantos, 10)
+})
+
+prueba('al final de la ventana se autoriza todo lo que quede', () => {
+  const c = calcularCupo({ ...base, fraccionDeVentana: 1 })
+  assert.ok(c.hay)
+  assert.equal(c.cuantos, 20)
+})
+
+prueba('si ya se ha ido por delante del ritmo, se espera', () => {
+  // Doce enviados cuando a estas horas tocaban cinco.
+  const c = calcularCupo({ ...base, enviadosHoyCampana: 12, fraccionDeVentana: 0.25 })
+  assert.equal(c.hay, false)
+  assert.equal(c.hay === false && c.motivo, 'ritmo')
+})
+
+prueba('sin fracción, el comportamiento no cambia', () => {
+  // Quien no pasa el dato —los imanes— sigue viendo el cupo entero.
+  const c = calcularCupo(base)
+  assert.ok(c.hay)
+  assert.equal(c.cuantos, 20)
+})
+
+prueba('el ritmo nunca autoriza más de lo que permiten los topes', () => {
+  const c = calcularCupo({
+    ...base,
+    topeHorarioCuenta: 3,
+    enviadosEstaHoraCuenta: 0,
+    fraccionDeVentana: 1,
+  })
+  assert.ok(c.hay)
+  assert.equal(c.cuantos, 3, 'el ritmo se saltó el tope horario')
+})
+
 console.log(`\n${ok} comprobaciones correctas`)
 if (fallos.length) {
   console.error(`\n${fallos.length} FALLOS:\n`)

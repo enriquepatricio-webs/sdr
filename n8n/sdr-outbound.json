@@ -62,7 +62,7 @@
     },
     {
       "parameters": {
-        "url": "https://sdr.thecotocompany.com/api/leads/next?mode=primer_toque&limit=25",
+        "url": "https://sdr.thecotocompany.com/api/leads/next?mode=primer_toque&limit=3",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {
@@ -164,10 +164,10 @@
     },
     {
       "parameters": {
-        "amount": "={{ Math.floor(Math.random() * 141) + 40 }}"
+        "amount": "={{ Math.floor(Math.random() * 331) + 90 }}"
       },
       "id": "21bea70a-e1aa-4950-be8b-c2ef23252ca7",
-      "name": "Esperar 40-180 s",
+      "name": "Esperar 90-420 s",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [
@@ -270,18 +270,7 @@
       "main": [
         [
           {
-            "node": "Esperar 40-180 s",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Esperar 40-180 s": {
-      "main": [
-        [
-          {
-            "node": "Lead a lead",
+            "node": "Esperar 90-420 s",
             "type": "main",
             "index": 0
           }
@@ -333,6 +322,17 @@
         [
           {
             "node": "Redactar primer toque",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Esperar 90-420 s": {
+      "main": [
+        [
+          {
+            "node": "Lead a lead",
             "type": "main",
             "index": 0
           }

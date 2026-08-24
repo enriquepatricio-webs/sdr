@@ -12,10 +12,19 @@
  * lo que ya ha salido hoy.
  */
 
-export type MotivoSinCupo = 'tope_diario_cuenta' | 'tope_diario_campana' | 'tope_horario'
+export type MotivoSinCupo =
+  | 'tope_diario_cuenta'
+  | 'tope_diario_campana'
+  | 'tope_horario'
+  /** Hay cupo, pero todavía no toca: se está repartiendo a lo largo del día. */
+  | 'ritmo'
 
 export type Cupo =
-  | { hay: true; cuantos: number; limitadoPor: 'cuenta' | 'campana' | 'hora' | 'lote' }
+  | {
+      hay: true
+      cuantos: number
+      limitadoPor: 'cuenta' | 'campana' | 'hora' | 'ritmo' | 'lote'
+    }
   | { hay: false; motivo: MotivoSinCupo; detalle: string }
 
 export type EntradaCupo = {
@@ -33,6 +42,15 @@ export type EntradaCupo = {
   enviadosEstaHoraCuenta: number
   /** Tamaño máximo del lote que pide quien llama. */
   lote: number
+  /**
+   * Qué parte de la ventana de envío ha pasado ya, de 0 a 1.
+   *
+   * Es lo que reparte el cupo del día a lo largo del día. A media mañana solo
+   * está autorizada la mitad de los envíos, aunque el tope diario entero siga
+   * libre. Sin esto los veinte correos salían en la primera hora, que es lo que
+   * un desconocido percibe como un envío masivo.
+   */
+  fraccionDeVentana?: number
 }
 
 /**
@@ -83,10 +101,36 @@ export function calcularCupo(e: EntradaCupo): Cupo {
     }
   }
 
+  /**
+   * El ritmo: cuántos DEBERÍAN haber salido ya a estas horas.
+   *
+   * Es lo que convierte "veinte al día" en veinte repartidos, y no veinte
+   * seguidos en cuanto abre la ventana. A mitad de la ventana están autorizados
+   * la mitad; si ya se han mandado esos, se espera aunque el tope diario tenga
+   * sitio de sobra.
+   *
+   * Se redondea hacia arriba y con un mínimo de uno para que a primera hora se
+   * pueda empezar: con el redondeo hacia abajo, a las 09:05 el permitido sería
+   * cero y la campaña no arrancaría nunca.
+   */
+  let quedaRitmo = Number.POSITIVE_INFINITY
+  if (e.fraccionDeVentana !== undefined) {
+    const permitidoAhora = Math.max(1, Math.ceil(e.topeDiarioCampana * e.fraccionDeVentana))
+    quedaRitmo = permitidoAhora - e.enviadosHoyCampana
+    if (quedaRitmo <= 0) {
+      return {
+        hay: false,
+        motivo: 'ritmo',
+        detalle: `${e.enviadosHoyCampana} enviados y a estas horas tocan ${permitidoAhora}; se reparte el resto durante el día`,
+      }
+    }
+  }
+
   const candidatos = [
     { n: quedaCuenta, quien: 'cuenta' as const },
     { n: quedaCampana, quien: 'campana' as const },
     { n: quedaHora, quien: 'hora' as const },
+    { n: quedaRitmo, quien: 'ritmo' as const },
     { n: e.lote, quien: 'lote' as const },
   ]
   const menor = candidatos.reduce((a, b) => (b.n < a.n ? b : a))

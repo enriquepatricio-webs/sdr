@@ -131,3 +131,29 @@ export function proximaApertura(ventana: SendingWindow, ahora: Date): Date {
   // Una ventana sin ningún día hábil no abre nunca; se devuelve lejos.
   return new Date(ahora.getTime() + 7 * 24 * 3600_000)
 }
+
+/**
+ * Qué parte de la ventana de hoy ha transcurrido ya, de 0 a 1.
+ *
+ * Sirve para repartir el cupo diario a lo largo del día en vez de gastarlo de
+ * golpe. Sin esto, la cola entrega el cupo entero en cuanto hay hueco y los
+ * veinte correos del día salen en la primera hora: para quien los recibe eso es
+ * un envío masivo, y para el proveedor un patrón que no se parece en nada a una
+ * persona escribiendo.
+ *
+ * Fuera de la ventana devuelve 0 antes de abrir y 1 después de cerrar, así que
+ * quien llame no necesita casos especiales.
+ */
+export function fraccionDeVentana(ventana: SendingWindow, ahora: Date): number {
+  const partes = partesLocales(ventana.tz, ahora)
+  if (!ventana.days.includes(partes.diaSemana)) return 0
+
+  const { minutos } = partes
+  const [ha, ma] = ventana.from.split(':').map(Number)
+  const [hc, mc] = ventana.to.split(':').map(Number)
+  const abre = ha * 60 + ma
+  const cierra = hc * 60 + mc
+  if (cierra <= abre) return 1
+
+  return Math.min(1, Math.max(0, (minutos - abre) / (cierra - abre)))
+}
