@@ -178,6 +178,7 @@ export type MensajeUnipile = {
   is_sender?: number | boolean;
   timestamp?: string;
   sender_id?: string;
+  chat_id?: string;
 };
 
 /**
@@ -218,6 +219,60 @@ export async function listarMensajes(
     `/chats/${encodeURIComponent(chatId)}/messages?limit=${limite}`,
     { method: "GET" },
   );
+}
+
+/**
+ * Mensajes de una cuenta entera, de todos sus hilos.
+ *
+ * Es la única forma de releer lo que nos han escrito. El `chat_id` que Unipile
+ * devuelve al ABRIR una conversación no sirve para volver a leerla: los
+ * veintisiete que teníamos guardados responden 404 "Chat not found". Unipile da
+ * un identificador al crear el chat y otro distinto cuando la conversación
+ * existe de verdad, y el nuestro se queda obsoleto en cuanto el prospecto
+ * contesta.
+ *
+ * Además cuesta una llamada por cuenta en vez de una por hilo.
+ */
+export async function listarMensajesDeCuenta(opciones: {
+  accountId: string;
+  desde?: Date;
+  limite?: number;
+}): Promise<{ items: MensajeUnipile[] }> {
+  const params = new URLSearchParams({
+    account_id: opciones.accountId,
+    limit: String(opciones.limite ?? 100),
+  });
+  if (opciones.desde) params.set("after", opciones.desde.toISOString());
+  return pedir<{ items: MensajeUnipile[] }>(`/messages?${params.toString()}`, {
+    method: "GET",
+  });
+}
+
+export type AsistenteUnipile = {
+  provider_id?: string;
+  name?: string;
+  is_self?: number | boolean;
+  profile_url?: string;
+  specifics?: { public_identifier?: string };
+};
+
+/**
+ * Quién está en un hilo.
+ *
+ * Hace falta para saber a QUIÉN pertenece un mensaje entrante: `/messages` trae
+ * el `sender_id` de Unipile, y ese número no es el `provider_id` que guardamos
+ * nosotros —los de Instagram vienen de Google Maps y son códigos de sitio, tipo
+ * `ChIJ...`—. El `public_identifier` (el @usuario) sí es el mismo aquí y en la
+ * base de datos, y es lo único con lo que se puede cruzar.
+ */
+export async function asistentesDelChat(
+  chatId: string,
+): Promise<AsistenteUnipile[]> {
+  const r = await pedir<{ items?: AsistenteUnipile[] }>(
+    `/chats/${encodeURIComponent(chatId)}/attendees`,
+    { method: "GET" },
+  );
+  return r.items ?? [];
 }
 
 export type CorreoUnipile = {

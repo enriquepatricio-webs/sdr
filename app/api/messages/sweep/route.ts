@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { and, desc, eq, inArray, isNotNull, notInArray } from "drizzle-orm";
+import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   TERMINAL_LEAD_STATUSES,
@@ -7,10 +7,15 @@ import {
   campaigns,
   leads,
   normalizedEmail,
+  runLogs,
   touches,
 } from "@/lib/db/schema";
 import { jsonError, serverError } from "@/lib/api";
-import { listarCorreos, listarMensajes } from "@/lib/unipile";
+import {
+  asistentesDelChat,
+  listarCorreos,
+  listarMensajesDeCuenta,
+} from "@/lib/unipile";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -39,28 +44,18 @@ export const maxDuration = 300;
 /**
  * Cuántas respuestas se reinyectan por vuelta.
  *
- * El cron pasa cada pocos minutos, así que un atasco se drena solo. El tope
+ * El cron pasa cada cuarto de hora, así que un atasco se drena solo. El tope
  * está para que un buzón con cien respuestas viejas no dispare cien agentes a
  * la vez, que es justo lo que hay que evitar: cien mensajes saliendo en el
  * mismo segundo se parecen mucho a un bot.
  */
 const MAX_POR_VUELTA = 5;
 
-/** Hasta dónde mira hacia atrás en el buzón la primera vez. */
-const DIAS_DE_CORREO = 14;
+/** Hasta dónde mira hacia atrás. */
+const DIAS_ATRAS = 14;
 
-/**
- * Tope de hilos que se miran por vuelta.
- *
- * Cada hilo es una llamada a Unipile, así que el coste crece con las
- * conversaciones abiertas y no con el trabajo que hay que hacer. Con el cron
- * cuarto-horario, cien hilos por vuelta cubren de sobra el ritmo actual.
- *
- * ponytail: recorta a los cien hilos tocados más recientemente; si algún día
- * hay más de cien conversaciones vivas a la vez, hace falta guardar por dónde
- * iba el barrido en vez de empezar siempre por arriba.
- */
-const MAX_HILOS_POR_VUELTA = 100;
+/** Etiqueta con la que se apunta cada mensaje ya mirado. */
+const YA_MIRADO = "barrido-visto";
 
 type Entrante = {
   accountId: string;
@@ -70,8 +65,12 @@ type Entrante = {
   email: string | null;
   nombre: string | null;
   providerId: string | null;
+  usuario: string | null;
   cuando: string | null;
 };
+
+/** Algo que no se pudo leer. Se llama Fallo y no Error para no tapar el global. */
+type Fallo = { donde: string; error: string };
 
 export async function POST() {
   const webhook = process.env.N8N_INBOUND_WEBHOOK_URL;
@@ -91,23 +90,45 @@ export async function POST() {
      * Unipile cambiara un parámetro el barrido seguiría diciendo que todo está
      * en orden mientras deja de leer el correo entero.
      */
-    const errores: { donde: string; error: string }[] = [];
+    const errores: Fallo[] = [];
+    const desde = new Date(Date.now() - DIAS_ATRAS * 24 * 60 * 60 * 1000);
+    const cuentas = await db
+      .select({
+        unipileAccountId: accounts.unipileAccountId,
+        provider: accounts.provider,
+        workspaceId: accounts.workspaceId,
+      })
+      .from(accounts)
+      .where(eq(accounts.status, "active"));
+
     const candidatos = [
-      ...(await deLasConversaciones(errores)),
-      ...(await delCorreo(errores)),
+      ...(await deLosMensajes(
+        cuentas.filter((c) => c.provider !== "email"),
+        desde,
+        errores,
+      )),
+      ...(await delCorreo(
+        cuentas.filter((c) => c.provider === "email"),
+        desde,
+        errores,
+      )),
     ];
 
-    const nuevos = await soloLosNoRegistrados(candidatos);
+    const nuevos = await soloLosNoMirados(candidatos);
     const aReinyectar = nuevos.slice(0, MAX_POR_VUELTA);
 
     const reinyectados: string[] = [];
     const fallidos: { messageId: string; error: string }[] = [];
     for (const e of aReinyectar) {
       try {
+        // El @usuario solo se pide de los que se van a reinyectar de verdad:
+        // es una llamada más por hilo y no vale la pena gastarla en un mensaje
+        // que se va a quedar esperando al siguiente cuarto de hora.
+        const conUsuario = e.chatId ? await conElUsuarioDelHilo(e) : e;
         const res = await fetch(webhook, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(comoWebhookDeUnipile(e)),
+          body: JSON.stringify(comoWebhookDeUnipile(conUsuario)),
         });
         if (!res.ok) throw new Error(`n8n respondió ${res.status}`);
         reinyectados.push(e.messageId);
@@ -119,9 +140,11 @@ export async function POST() {
       }
     }
 
+    await apuntarComoMirados(reinyectados);
+
     return NextResponse.json({
       revisados: candidatos.length,
-      sinContestar: nuevos.length,
+      sinMirar: nuevos.length,
       reinyectados,
       fallidos,
       errores,
@@ -133,64 +156,51 @@ export async function POST() {
 }
 
 /**
- * Lo que nos han escrito en los hilos de LinkedIn e Instagram.
+ * Lo que nos han escrito por LinkedIn e Instagram.
  *
- * Se parte de NUESTROS hilos, no de la lista de conversaciones de la cuenta: lo
- * que interesa son las respuestas de gente a la que escribimos nosotros, y así
- * el coste es proporcional a las campañas abiertas y no al buzón entero.
+ * Va cuenta a cuenta y no hilo a hilo a propósito. El `chat_id` que guardamos
+ * al abrir una conversación NO se puede volver a leer: los veintisiete que
+ * había en la base respondían 404 "Chat not found". Unipile da un identificador
+ * al crear el chat y otro cuando la conversación existe de verdad.
  */
-async function deLasConversaciones(
-  errores: { donde: string; error: string }[],
+async function deLosMensajes(
+  cuentas: { unipileAccountId: string }[],
+  desde: Date,
+  errores: Fallo[],
 ): Promise<Entrante[]> {
-  const hilos = await db
-    .selectDistinct({
-      chatId: touches.unipileChatId,
-      unipileAccountId: accounts.unipileAccountId,
-      // Va en el SELECT porque Postgres exige que lo que ordena un DISTINCT
-      // esté también entre las columnas seleccionadas.
-      tocadoEn: leads.updatedAt,
-    })
-    .from(touches)
-    .innerJoin(leads, eq(touches.leadId, leads.id))
-    .innerJoin(accounts, eq(touches.accountId, accounts.id))
-    .where(
-      and(
-        isNotNull(touches.unipileChatId),
-        eq(accounts.status, "active"),
-        notInArray(leads.status, [...TERMINAL_LEAD_STATUSES]),
-      ),
-    )
-    .orderBy(desc(leads.updatedAt))
-    .limit(MAX_HILOS_POR_VUELTA);
-
   const encontrados: Entrante[] = [];
-  for (const hilo of hilos) {
-    if (!hilo.chatId) continue;
+
+  for (const cuenta of cuentas) {
+    let items;
     try {
-      const { items } = await listarMensajes(hilo.chatId, 20);
-      for (const m of items ?? []) {
-        // `is_sender` llega como 0/1 o como booleano según el proveedor. Lo que
-        // no puede pasar es tratar un mensaje nuestro como entrante: el agente
-        // se contestaría a sí mismo en bucle.
-        if (m.is_sender) continue;
-        if (!m.text?.trim()) continue;
-        encontrados.push({
-          accountId: hilo.unipileAccountId,
-          messageId: m.id,
-          chatId: hilo.chatId,
-          texto: m.text,
-          email: null,
-          nombre: null,
-          providerId: m.sender_id ?? null,
-          cuando: m.timestamp ?? null,
-        });
-      }
+      ({ items } = await listarMensajesDeCuenta({
+        accountId: cuenta.unipileAccountId,
+        desde,
+      }));
     } catch (err) {
-      // Un hilo que Unipile ya no sirve (chat borrado, cuenta reconectada) no
-      // puede dejar sin revisar a los demás, pero sí tiene que constar.
       errores.push({
-        donde: `hilo ${hilo.chatId}`,
+        donde: `cuenta ${cuenta.unipileAccountId}`,
         error: err instanceof Error ? err.message : String(err),
+      });
+      continue;
+    }
+
+    for (const m of items ?? []) {
+      // `is_sender` llega como 0/1 o como booleano según el proveedor. Lo que
+      // no puede pasar es tratar un mensaje nuestro como entrante: el agente
+      // se contestaría a sí mismo en bucle.
+      if (m.is_sender) continue;
+      if (!m.text?.trim()) continue;
+      encontrados.push({
+        accountId: cuenta.unipileAccountId,
+        messageId: m.id,
+        chatId: m.chat_id ?? null,
+        texto: m.text,
+        email: null,
+        nombre: null,
+        providerId: m.sender_id ?? null,
+        usuario: null,
+        cuando: m.timestamp ?? null,
       });
     }
   }
@@ -206,17 +216,10 @@ async function deLasConversaciones(
  * reinyectaría también cada boletín y cada aviso automático que entra.
  */
 async function delCorreo(
-  errores: { donde: string; error: string }[],
+  buzones: { unipileAccountId: string; workspaceId: string | null }[],
+  desde: Date,
+  errores: Fallo[],
 ): Promise<Entrante[]> {
-  const buzones = await db
-    .select({
-      unipileAccountId: accounts.unipileAccountId,
-      workspaceId: accounts.workspaceId,
-    })
-    .from(accounts)
-    .where(and(eq(accounts.provider, "email"), eq(accounts.status, "active")));
-
-  const desde = new Date(Date.now() - DIAS_DE_CORREO * 24 * 60 * 60 * 1000);
   const encontrados: Entrante[] = [];
 
   for (const buzon of buzones) {
@@ -278,6 +281,7 @@ async function delCorreo(
         email: de,
         nombre: c.from_attendee?.display_name ?? null,
         providerId: null,
+        usuario: null,
         cuando: c.date ?? null,
       });
     }
@@ -286,16 +290,46 @@ async function delCorreo(
 }
 
 /**
- * Quita lo que el agente ya vio.
+ * Le pone al mensaje el @usuario de quien escribe.
  *
- * La prueba de que un mensaje está atendido es que existe su toque entrante:
- * lo escribe el propio flujo de n8n al recibirlo, así que si está, la
- * conversación siguió su curso.
+ * Es la única clave con la que se puede saber de quién es un DM. El `sender_id`
+ * que trae Unipile no es el `provider_id` que guardamos nosotros: los de
+ * Instagram salen de Google Maps y son códigos de sitio (`ChIJ...`).
+ *
+ * Si la llamada falla se sigue adelante sin él: quizá resuelva por chat_id, y
+ * si no, W2 lo dará por tráfico ajeno, que es lo mismo que pasaría de todas
+ * formas.
  */
-async function soloLosNoRegistrados(lista: Entrante[]): Promise<Entrante[]> {
+async function conElUsuarioDelHilo(e: Entrante): Promise<Entrante> {
+  try {
+    const asistentes = await asistentesDelChat(e.chatId!);
+    const otro = asistentes.find((a) => !a.is_self);
+    if (!otro) return e;
+    return {
+      ...e,
+      usuario: otro.specifics?.public_identifier ?? null,
+      nombre: otro.name ?? e.nombre,
+      providerId: otro.provider_id ?? e.providerId,
+    };
+  } catch {
+    return e;
+  }
+}
+
+/**
+ * Quita lo que ya se miró.
+ *
+ * Dos pruebas, y hacen falta las dos. Que exista el toque entrante significa
+ * que el agente lo atendió. Y el apunte en el registro significa que el barrido
+ * ya lo mandó, aunque no fuera de nadie: sin eso, un mensaje de un desconocido
+ * —que nunca llega a ser un toque— volvería a salir elegido en cada vuelta y
+ * taparía para siempre a las respuestas de verdad que van detrás.
+ */
+async function soloLosNoMirados(lista: Entrante[]): Promise<Entrante[]> {
   if (lista.length === 0) return [];
   const ids = [...new Set(lista.map((e) => e.messageId))];
-  const yaEstan = new Set(
+
+  const registrados = new Set(
     (
       await db
         .select({ id: touches.unipileMessageId })
@@ -306,12 +340,41 @@ async function soloLosNoRegistrados(lista: Entrante[]): Promise<Entrante[]> {
       .filter((id): id is string => Boolean(id)),
   );
 
+  const mirados = new Set(
+    (
+      await db
+        .select({ id: sql<string>`${runLogs.payload}->>'messageId'` })
+        .from(runLogs)
+        .where(
+          and(
+            eq(runLogs.workflow, YA_MIRADO),
+            inArray(sql`${runLogs.payload}->>'messageId'`, ids),
+          ),
+        )
+    )
+      .map((r) => r.id)
+      .filter(Boolean),
+  );
+
   const vistos = new Set<string>();
   return lista.filter((e) => {
-    if (yaEstan.has(e.messageId) || vistos.has(e.messageId)) return false;
+    if (registrados.has(e.messageId) || mirados.has(e.messageId)) return false;
+    if (vistos.has(e.messageId)) return false;
     vistos.add(e.messageId);
     return true;
   });
+}
+
+async function apuntarComoMirados(messageIds: string[]): Promise<void> {
+  if (messageIds.length === 0) return;
+  await db.insert(runLogs).values(
+    messageIds.map((messageId) => ({
+      workflow: YA_MIRADO,
+      level: "info" as const,
+      message: `Reinyectado en el flujo de entrantes: ${messageId}`,
+      payload: { messageId },
+    })),
+  );
 }
 
 /**
@@ -334,6 +397,7 @@ function comoWebhookDeUnipile(e: Entrante) {
     sender: {
       attendee_provider_id: e.providerId,
       attendee_name: e.nombre,
+      attendee_specifics: e.usuario ? { public_identifier: e.usuario } : {},
     },
     attendees: [],
     /** Marca de dónde salió, para poder distinguirlo en las ejecuciones. */
