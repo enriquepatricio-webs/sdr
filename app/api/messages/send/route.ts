@@ -26,7 +26,7 @@ import { ajustesEfectivos } from "@/lib/workspace";
 import { AVISO_SIN_PRECIOS, mencionaDinero } from "@/lib/sin-precios";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60
+export const maxDuration = 60;
 
 /** Fallos de envío seguidos antes de apartar un lead como irrecuperable. */
 const MAX_FALLOS_POR_LEAD = 3;
@@ -232,12 +232,16 @@ export async function POST(request: Request) {
           messageId = r.message_id;
           chatId = r.chat_id;
         } else {
-          // La nota de invitación de LinkedIn tiene un tope duro de 300.
+          // El recorte lo hace notaDeInvitacion, que corta por el final de una
+          // frase y respeta el tope real de 200. Aquí había un slice a 300 —el
+          // número que dice la documentación de LinkedIn, no el que acepta la
+          // API— y `notaDeInvitacion` estaba importada sin usarse: diez
+          // invitaciones de hoy murieron con "too_many_characters" o las paró
+          // nuestra propia comprobación por tener 217, 244, 292 y 300 letras.
           const r = await invitar({
             accountId: cuenta.unipileAccountId,
             providerId,
-            mensaje:
-              d.texto.length > 300 ? `${d.texto.slice(0, 297)}...` : d.texto,
+            mensaje: notaDeInvitacion(d.texto),
             email: lead.email ?? undefined,
           });
           messageId = r.invitation_id;
@@ -253,7 +257,7 @@ export async function POST(request: Request) {
         const r = await invitar({
           accountId: cuenta.unipileAccountId,
           providerId: lead.providerId,
-          mensaje: d.texto,
+          mensaje: notaDeInvitacion(d.texto),
           email: lead.email ?? undefined,
         });
         messageId = r.invitation_id;
