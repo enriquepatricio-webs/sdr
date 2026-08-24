@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
-import { and, asc, desc, eq, ne, notInArray } from "drizzle-orm";
+import { and, asc, desc, eq, ne, notInArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   TERMINAL_LEAD_STATUSES,
   accounts,
   campaigns,
   leads,
+  normalizedHandle,
   touches,
 } from "@/lib/db/schema";
 import { jsonError, serverError } from "@/lib/api";
@@ -34,6 +35,15 @@ export async function GET(request: Request) {
   const chatId = url.searchParams.get("chat_id");
   const providerId = url.searchParams.get("provider_id");
   const accountId = url.searchParams.get("account_id");
+  /**
+   * El @usuario del prospecto. Es la clave BUENA.
+   *
+   * Ni el chat ni el provider_id casan entre lo que guardamos al enviar y lo que
+   * llega en el webhook: Unipile devuelve un chat al abrir la conversación y
+   * otro distinto cuando contestan, y su provider_id no es el que trae el
+   * scraper. El nombre de usuario es el mismo en los dos sitios.
+   */
+  const usuario = url.searchParams.get("usuario");
 
   if (!chatId && !providerId) {
     return jsonError("Hace falta chat_id o provider_id.");
@@ -58,6 +68,33 @@ export async function GET(request: Request) {
         .orderBy(desc(touches.createdAt))
         .limit(1);
       lead = porChat?.lead;
+    }
+
+    // Por @usuario dentro de la empresa dueña de la cuenta que recibió el
+    // mensaje. Es lo primero que funciona de verdad en Instagram.
+    if (!lead && usuario) {
+      const empresa = accountId
+        ? ((
+            await db
+              .select({ id: accounts.workspaceId })
+              .from(accounts)
+              .where(eq(accounts.unipileAccountId, accountId))
+          )[0]?.id ?? null)
+        : null;
+
+      const [porUsuario] = await db
+        .select({ lead: leads })
+        .from(leads)
+        .innerJoin(campaigns, eq(campaigns.id, leads.campaignId))
+        .where(
+          and(
+            sql`${normalizedHandle(leads.instagramUsername)} = ${normalizedHandle(sql`${usuario}`)}`,
+            notInArray(leads.status, [...TERMINAL_LEAD_STATUSES]),
+            ...(empresa ? [eq(campaigns.workspaceId, empresa)] : []),
+          ),
+        )
+        .orderBy(desc(leads.updatedAt));
+      lead = porUsuario?.lead;
     }
 
     if (!lead && providerId) {

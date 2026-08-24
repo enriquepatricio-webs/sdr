@@ -326,6 +326,77 @@ await prueba('corta en un punto, no a mitad de palabra', () => {
   assert.ok(!nota.includes('  '), 'quedó un espacio doble al cortar')
 })
 
+/* ---- El eco, con el payload REAL de producción --------------------------- */
+/* Este es literalmente el cuerpo que mandó Unipile el 24/8 a las 10:39, con los
+   identificadores tal cual llegaron. Se detectaba como escrito por el prospecto
+   y el agente habría contestado a nuestro propio mensaje, en un hilo con una
+   persona real delante. */
+
+const ECO_REAL = {
+  event: 'message_received',
+  account_id: 'dWigdUJzQCC0Nw2_6Wqy2w',
+  account_type: 'INSTAGRAM',
+  // Ojo: este user_id NO es el mismo número que el attendee_provider_id del
+  // remitente, aunque sean la misma cuenta. Ahí estaba el fallo.
+  account_info: { type: 'INSTAGRAM', user_id: '6681108632' },
+  chat_id: 'Mp-voy-aXq-S4PuPd-EBJw',
+  message_id: 'jfRxEMUeV8-ie7oCqtsFuQ',
+  message: 'Hola, no nos conocemos de nada. Veo que ofrecéis incentivos…',
+  is_sender: true,
+  sender: {
+    attendee_id: 'iUmp3gKMViy6OCqDvsumjw',
+    attendee_provider_id: '100216134716349',
+    attendee_name: 'Kike',
+    attendee_profile_url: 'https://www.instagram.com/enriique.pga/',
+    attendee_specifics: { provider: 'INSTAGRAM', public_identifier: 'enriique.pga' },
+  },
+  attendees: [
+    {
+      attendee_id: '0vcd2pbvXj-dRzRE7U4YSA',
+      attendee_provider_id: '117082913011103',
+      attendee_name: 'SOMOSCASA',
+      attendee_profile_url: 'https://www.instagram.com/somoscasabarcelona/',
+      attendee_specifics: { provider: 'INSTAGRAM', public_identifier: 'somoscasabarcelona' },
+    },
+  ],
+}
+
+await prueba('un mensaje NUESTRO se reconoce como eco aunque los ids no casen', () => {
+  const e = interpretarWebhook(ECO_REAL)
+  assert.ok(e)
+  assert.equal(
+    e.esNuestro,
+    true,
+    'el agente se pondría a responder a sus propios mensajes en un hilo real',
+  )
+})
+
+await prueba('del eco se saca el @usuario del PROSPECTO, no el nuestro', () => {
+  const e = interpretarWebhook(ECO_REAL)
+  assert.equal(e?.remitenteUsuario, 'somoscasabarcelona')
+})
+
+await prueba('en una respuesta de verdad, el usuario es quien escribe', () => {
+  const respuesta = {
+    ...ECO_REAL,
+    is_sender: false,
+    message: 'Cuéntame',
+    sender: ECO_REAL.attendees[0],
+    attendees: [ECO_REAL.sender],
+  }
+  const e = interpretarWebhook(respuesta)
+  assert.equal(e?.esNuestro, false)
+  assert.equal(e?.remitenteUsuario, 'somoscasabarcelona')
+})
+
+await prueba('si falta is_sender, se cae al respaldo de comparar ids', () => {
+  const sinBandera = { ...ECO_REAL, is_sender: undefined }
+  const e = interpretarWebhook(sinBandera)
+  // Los ids no coinciden, así que el respaldo dice que no es nuestro: es
+  // justamente el caso que hacía falta cubrir con is_sender.
+  assert.equal(e?.esNuestro, false)
+})
+
 console.log(`\n${ok} comprobaciones correctas`)
 if (fallos.length) {
   console.error(`\n${fallos.length} FALLOS:\n`)

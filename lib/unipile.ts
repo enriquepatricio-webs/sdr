@@ -283,12 +283,19 @@ export type WebhookMensaje = {
   message_id?: string
   message?: string
   timestamp?: string
-  sender?: {
-    attendee_id?: string
-    attendee_name?: string
-    attendee_provider_id?: string
-    attendee_profile_url?: string
-  }
+  sender?: Asistente
+  /** Todos los que están en la conversación, nosotros incluidos. */
+  attendees?: Asistente[]
+  /** Lo dice Unipile directamente: true si el mensaje lo mandamos nosotros. */
+  is_sender?: boolean
+}
+
+export type Asistente = {
+  attendee_id?: string
+  attendee_name?: string
+  attendee_provider_id?: string
+  attendee_profile_url?: string
+  attendee_specifics?: { provider?: string; public_identifier?: string }
 }
 
 export type EventoEntrante = {
@@ -300,6 +307,8 @@ export type EventoEntrante = {
   remitenteProviderId: string | null
   remitenteNombre: string | null
   remitenteUrl: string | null
+  /** El @usuario del prospecto: la única clave que casa entre envío y respuesta. */
+  remitenteUsuario: string | null
   ocurridoEn: Date
 }
 
@@ -326,8 +335,43 @@ export function interpretarWebhook(payload: WebhookMensaje): EventoEntrante | nu
   const nuestroUserId = payload.account_info?.user_id
   const remitente = payload.sender?.attendee_provider_id ?? null
 
+  /**
+   * `is_sender` es la respuesta directa a "¿lo he escrito yo?" y es la que vale.
+   *
+   * Antes se deducía comparando `account_info.user_id` con
+   * `sender.attendee_provider_id`, y esos dos números viven en espacios de
+   * identificadores DISTINTOS: en un evento real valían 6681108632 y
+   * 100216134716349 para la misma cuenta. La comparación daba siempre falso, así
+   * que cada mensaje que mandábamos volvía marcado como escrito por el prospecto
+   * y el agente se habría puesto a responderse a sí mismo, en un hilo con una
+   * persona real delante.
+   *
+   * La comparación se conserva como respaldo por si algún proveedor no manda
+   * `is_sender`.
+   */
+  const esNuestro =
+    payload.is_sender === true ||
+    Boolean(nuestroUserId && remitente && nuestroUserId === remitente)
+
+  /**
+   * El @usuario del prospecto, que es la ÚNICA clave estable para reencontrarlo.
+   *
+   * Ni el chat_id ni el provider_id sirven: el chat que Unipile devuelve al
+   * abrir la conversación no es el mismo que llega en el webhook, y el
+   * provider_id del webhook tampoco coincide con el que trae el scraper. El
+   * nombre de usuario sí: `somoscasabarcelona` es `somoscasabarcelona` en los
+   * dos sitios.
+   */
+  const otros = (payload.attendees ?? []).filter(
+    (a) => a.attendee_provider_id !== payload.sender?.attendee_provider_id,
+  )
+  const conversador = esNuestro ? otros[0] : payload.sender
+  const usuario =
+    conversador?.attendee_specifics?.public_identifier ??
+    usuarioDeUrlDePerfil(conversador?.attendee_profile_url ?? null)
+
   return {
-    esNuestro: Boolean(nuestroUserId && remitente && nuestroUserId === remitente),
+    esNuestro,
     messageId,
     chatId,
     accountId: payload.account_id ?? '',
@@ -335,6 +379,7 @@ export function interpretarWebhook(payload: WebhookMensaje): EventoEntrante | nu
     remitenteProviderId: remitente,
     remitenteNombre: payload.sender?.attendee_name ?? null,
     remitenteUrl: payload.sender?.attendee_profile_url ?? null,
+    remitenteUsuario: usuario ?? null,
     ocurridoEn: payload.timestamp ? new Date(payload.timestamp) : new Date(),
   }
 }
@@ -386,6 +431,13 @@ export function notaDeInvitacion(texto: string): string {
 }
 
 /** De una URL de perfil de LinkedIn saca el identificador público. */
+/** De una URL de perfil de Instagram o LinkedIn saca el nombre de usuario. */
+export function usuarioDeUrlDePerfil(url: string | null | undefined): string | null {
+  if (!url) return null
+  const m = url.match(/(?:instagram\.com|linkedin\.com\/in)\/([^/?#]+)/i)
+  return m?.[1] ? decodeURIComponent(m[1]).toLowerCase() : null
+}
+
 export function identificadorDeUrlLinkedin(url: string | null): string | null {
   if (!url) return null
   const m = url.match(/linkedin\.com\/in\/([^/?#]+)/i)
