@@ -31,6 +31,38 @@ export const maxDuration = 60;
 /** Fallos de envío seguidos antes de apartar un lead como irrecuperable. */
 const MAX_FALLOS_POR_LEAD = 3;
 
+/**
+ * Errores de Unipile que hablan de ESTE destinatario y no de nuestro sistema.
+ *
+ * Un perfil bloqueado o borrado no se arregla esperando hora y media, así que
+ * reintentarlo tres veces son tres fallos garantizados y tres huecos del cupo
+ * del día tirados. Estos van directos a 'error'.
+ *
+ * Deliberadamente NO está aquí `provider_error`, que es un 500. Cuando El Sofá
+ * del Empresario mandaba a Unipile un identificador de Google Maps, la
+ * respuesta era exactamente esa, treinta y cuatro veces seguidas: un fallo
+ * nuestro disfrazado de destinatario imposible. Si llega a estar en la lista,
+ * habría quemado treinta y cuatro leads buenos por un bug de una línea.
+ */
+export const DESTINATARIO_IMPOSIBLE = ["invalid_recipient", "user_unreachable"];
+
+/**
+ * LinkedIn dice que no se puede reinvitar todavía.
+ *
+ * Significa que la invitación ANTERIOR sigue en pie: esa persona ya tiene
+ * nuestro mensaje. Contarlo como fallo y devolver el lead a la cola es pedirle
+ * a LinkedIn invitar tres veces a la misma persona, que es justo el patrón por
+ * el que se restringen cuentas.
+ */
+export const YA_TIENE_LA_INVITACION = "cannot_resend_yet";
+
+/** El `type` de la respuesta de Unipile, si el error viene de ahí. */
+export function tipoDeErrorUnipile(err: unknown): string | null {
+  if (!(err instanceof UnipileError)) return null;
+  const m = err.body.match(/errors\/([a-z_]+)/);
+  return m?.[1] ?? null;
+}
+
 const cuerpo = z.object({
   leadId: z.string().uuid(),
   texto: z.string().min(1),
@@ -362,23 +394,44 @@ export async function POST(request: Request) {
        * Al tercer intento pasa a 'error', que es terminal, sale de la cola y
        * aparece en el panel bajo "Con error" para que lo mire una persona.
        */
-      const [{ n: fallosDelLead } = { n: 0 }] = await db
-        .select({ n: count() })
-        .from(touches)
-        .where(and(eq(touches.leadId, lead.id), eq(touches.status, "fallido")));
+      const tipo = tipoDeErrorUnipile(err);
 
-      if (Number(fallosDelLead) >= MAX_FALLOS_POR_LEAD) {
+      if (tipo === YA_TIENE_LA_INVITACION) {
+        // Ya está contactado de verdad. Sale de la cola sin pasar por 'error':
+        // no es un lead roto, es uno que va por delante de nosotros.
+        await db
+          .update(leads)
+          .set({
+            status: lead.status === "nuevo" ? "contactado" : lead.status,
+            nextActionAt: null,
+          })
+          .where(eq(leads.id, lead.id));
+      } else if (tipo && DESTINATARIO_IMPOSIBLE.includes(tipo)) {
         await db
           .update(leads)
           .set({ status: "error", nextActionAt: null })
           .where(eq(leads.id, lead.id));
+      } else {
+        const [{ n: fallosDelLead } = { n: 0 }] = await db
+          .select({ n: count() })
+          .from(touches)
+          .where(
+            and(eq(touches.leadId, lead.id), eq(touches.status, "fallido")),
+          );
+
+        if (Number(fallosDelLead) >= MAX_FALLOS_POR_LEAD) {
+          await db
+            .update(leads)
+            .set({ status: "error", nextActionAt: null })
+            .where(eq(leads.id, lead.id));
+        }
       }
       await db.insert(runLogs).values({
         workflow: "sdr-envio",
         leadId: lead.id,
         level: "error",
         message: `Falló el envío: ${err instanceof Error ? err.message : String(err)}`,
-        payload: { touchId: toque.id, noSeReintenta: true },
+        payload: { touchId: toque.id, noSeReintenta: true, tipo },
       });
       return jsonError(
         `El envío falló y NO se va a reintentar (podría duplicar el mensaje). Revísalo a mano. Detalle: ${err instanceof Error ? err.message : String(err)}`,
