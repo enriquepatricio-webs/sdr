@@ -28,11 +28,7 @@ import {
   touches,
 } from "./db/schema";
 import { ACTORES_LECTURA, runSync } from "./apify";
-import {
-  enviarEnChat,
-  iniciarChat,
-  obtenerUsuario,
-} from "./unipile";
+import { enviarEnChat, iniciarChat, obtenerUsuario } from "./unipile";
 
 export type EstadoIman = (typeof magnetStateEnum.enumValues)[number];
 
@@ -853,18 +849,41 @@ export async function contestoDespuesDePedirle(
   contacto: Contacto,
 ): Promise<boolean> {
   if (!contacto.leadId) return false;
-  const [fila] = await db
+
+  /**
+   * Se compara con NUESTRO último mensaje, no con `updated_at` de la fila.
+   *
+   * Con `updated_at` cualquier retoque de contabilidad —sumar un intento,
+   * corregir un contador— movía el reloj hacia delante y la respuesta que
+   * estaba esperando pasaba a contar como antigua. La pregunta de verdad es
+   * "¿ha hablado después de que hablásemos nosotros?", y eso lo dicen los
+   * mensajes, no la fila.
+   *
+   * De paso evita repetir el recordatorio: en cuanto sale, el último mensaje
+   * vuelve a ser nuestro y no se dispara otra vez hasta que conteste.
+   */
+  const [nuestro] = await db
+    .select({ cuando: touches.createdAt })
+    .from(touches)
+    .where(
+      and(eq(touches.leadId, contacto.leadId), eq(touches.direction, "out")),
+    )
+    .orderBy(desc(touches.createdAt))
+    .limit(1);
+  if (!nuestro) return false;
+
+  const [suyo] = await db
     .select({ id: touches.id })
     .from(touches)
     .where(
       and(
         eq(touches.leadId, contacto.leadId),
         eq(touches.direction, "in"),
-        gt(touches.createdAt, contacto.updatedAt),
+        gt(touches.createdAt, nuestro.cuando),
       ),
     )
     .limit(1);
-  return Boolean(fila);
+  return Boolean(suyo);
 }
 
 /** Los contactos que todavía tienen algo pendiente, los más antiguos primero. */
