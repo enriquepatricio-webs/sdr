@@ -11,7 +11,8 @@
  * Unipile, y mandarlos como JSON devuelve un 400 poco explicativo.
  */
 
-export type UnipileProvider = 'LINKEDIN' | 'INSTAGRAM' | 'GOOGLE' | 'MICROSOFT' | 'IMAP'
+export type UnipileProvider =
+  "LINKEDIN" | "INSTAGRAM" | "GOOGLE" | "MICROSOFT" | "IMAP";
 
 /** Máximo que admite Unipile en el texto que acompaña a una invitación. */
 /**
@@ -21,7 +22,7 @@ export type UnipileProvider = 'LINKEDIN' | 'INSTAGRAM' | 'GOOGLE' | 'MICROSOFT' 
  * Unipile devolvió 400 `too_many_characters` en producción: las cuentas sin
  * Premium admiten menos. 200 pasa en todas.
  */
-export const MAX_CARACTERES_INVITACION = 200
+export const MAX_CARACTERES_INVITACION = 200;
 
 /**
  * Un fallo NUESTRO, detectado antes de tocar la red.
@@ -39,51 +40,58 @@ export class UnipileError extends Error {
     readonly status: number,
     readonly body: string,
   ) {
-    super(message)
-    this.name = 'UnipileError'
+    super(message);
+    this.name = "UnipileError";
   }
 }
 
 function configuracion() {
-  const apiKey = process.env.UNIPILE_API_KEY
-  const dsn = process.env.UNIPILE_DSN
-  if (!apiKey) throw new Error('UNIPILE_API_KEY no está definida.')
-  if (!dsn) throw new Error('UNIPILE_DSN no está definida. Formato: api8.unipile.com:13843')
+  const apiKey = process.env.UNIPILE_API_KEY;
+  const dsn = process.env.UNIPILE_DSN;
+  if (!apiKey) throw new Error("UNIPILE_API_KEY no está definida.");
+  if (!dsn)
+    throw new Error(
+      "UNIPILE_DSN no está definida. Formato: api8.unipile.com:13843",
+    );
   // El DSN se guarda sin esquema; aceptamos las dos formas por si acaso.
-  const base = dsn.startsWith('http') ? dsn : `https://${dsn}`
-  return { apiKey, base: `${base.replace(/\/$/, '')}/api/v1` }
+  const base = dsn.startsWith("http") ? dsn : `https://${dsn}`;
+  return { apiKey, base: `${base.replace(/\/$/, "")}/api/v1` };
 }
 
 async function pedir<T>(
   ruta: string,
   init: { method: string; body?: BodyInit; json?: boolean },
 ): Promise<T> {
-  const { apiKey, base } = configuracion()
+  const { apiKey, base } = configuracion();
   const res = await fetch(`${base}${ruta}`, {
     method: init.method,
     headers: {
-      'X-API-KEY': apiKey,
-      Accept: 'application/json',
+      "X-API-KEY": apiKey,
+      Accept: "application/json",
       // En multipart NO se pone Content-Type a mano: fetch tiene que añadir el
       // boundary. Ponerlo rompe la petición de una forma difícil de depurar.
-      ...(init.json ? { 'Content-Type': 'application/json' } : {}),
+      ...(init.json ? { "Content-Type": "application/json" } : {}),
     },
     body: init.body,
-    cache: 'no-store',
-  })
+    cache: "no-store",
+  });
 
-  const texto = await res.text()
+  const texto = await res.text();
   if (!res.ok) {
-    throw new UnipileError(`Unipile respondió ${res.status}: ${texto.slice(0, 300)}`, res.status, texto)
+    throw new UnipileError(
+      `Unipile respondió ${res.status}: ${texto.slice(0, 300)}`,
+      res.status,
+      texto,
+    );
   }
-  return (texto ? JSON.parse(texto) : {}) as T
+  return (texto ? JSON.parse(texto) : {}) as T;
 }
 
 /* -------------------------------------------------------------------------- */
 /* Enviar                                                                      */
 /* -------------------------------------------------------------------------- */
 
-export type ChatIniciado = { chat_id: string; message_id: string }
+export type ChatIniciado = { chat_id: string; message_id: string };
 
 /**
  * Abre una conversación nueva.
@@ -92,36 +100,42 @@ export type ChatIniciado = { chat_id: string; message_id: string }
  * desconocido el orden es: invitación primero, mensaje cuando la acepte.
  */
 export async function iniciarChat(opciones: {
-  accountId: string
-  attendeeId: string
-  texto: string
+  accountId: string;
+  attendeeId: string;
+  texto: string;
   /** InMail de LinkedIn Premium: permite escribir sin ser contacto. Consume cuota. */
-  inmail?: boolean
+  inmail?: boolean;
 }): Promise<ChatIniciado> {
-  const form = new FormData()
-  form.append('account_id', opciones.accountId)
-  form.append('attendees_ids', opciones.attendeeId)
-  form.append('text', opciones.texto)
+  const form = new FormData();
+  form.append("account_id", opciones.accountId);
+  form.append("attendees_ids", opciones.attendeeId);
+  form.append("text", opciones.texto);
   if (opciones.inmail) {
-    form.append('linkedin[api]', 'classic')
-    form.append('linkedin[inmail]', 'true')
+    form.append("linkedin[api]", "classic");
+    form.append("linkedin[inmail]", "true");
   }
-  return pedir<ChatIniciado>('/chats', { method: 'POST', body: form })
+  return pedir<ChatIniciado>("/chats", { method: "POST", body: form });
 }
 
-export type MensajeEnviado = { message_id: string }
+export type MensajeEnviado = { message_id: string };
 
 /** Responde dentro de un hilo que ya existe. */
-export async function enviarEnChat(chatId: string, texto: string): Promise<MensajeEnviado> {
-  const form = new FormData()
-  form.append('text', texto)
-  return pedir<MensajeEnviado>(`/chats/${encodeURIComponent(chatId)}/messages`, {
-    method: 'POST',
-    body: form,
-  })
+export async function enviarEnChat(
+  chatId: string,
+  texto: string,
+): Promise<MensajeEnviado> {
+  const form = new FormData();
+  form.append("text", texto);
+  return pedir<MensajeEnviado>(
+    `/chats/${encodeURIComponent(chatId)}/messages`,
+    {
+      method: "POST",
+      body: form,
+    },
+  );
 }
 
-export type InvitacionEnviada = { invitation_id: string; usage?: number }
+export type InvitacionEnviada = { invitation_id: string; usage?: number };
 
 /**
  * Invitación de contacto. En LinkedIn es el primer toque de una campaña en frío.
@@ -131,19 +145,19 @@ export type InvitacionEnviada = { invitation_id: string; usage?: number }
  * silencio esconde un playbook que está generando mensajes demasiado largos.
  */
 export async function invitar(opciones: {
-  accountId: string
-  providerId: string
-  mensaje?: string
+  accountId: string;
+  providerId: string;
+  mensaje?: string;
   /** LinkedIn a veces exige el email para invitar. */
-  email?: string
+  email?: string;
 }): Promise<InvitacionEnviada> {
   if (opciones.mensaje && opciones.mensaje.length > MAX_CARACTERES_INVITACION) {
     throw new ErrorAntesDeEnviar(
       `La nota de invitación tiene ${opciones.mensaje.length} caracteres y el máximo es ${MAX_CARACTERES_INVITACION}. Acorta el primer toque en el playbook.`,
-    )
+    );
   }
-  return pedir<InvitacionEnviada>('/users/invite', {
-    method: 'POST',
+  return pedir<InvitacionEnviada>("/users/invite", {
+    method: "POST",
     json: true,
     body: JSON.stringify({
       account_id: opciones.accountId,
@@ -151,7 +165,7 @@ export async function invitar(opciones: {
       ...(opciones.mensaje ? { message: opciones.mensaje } : {}),
       ...(opciones.email ? { user_email: opciones.email } : {}),
     }),
-  })
+  });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -159,12 +173,12 @@ export async function invitar(opciones: {
 /* -------------------------------------------------------------------------- */
 
 export type MensajeUnipile = {
-  id: string
-  text: string | null
-  is_sender?: number | boolean
-  timestamp?: string
-  sender_id?: string
-}
+  id: string;
+  text: string | null;
+  is_sender?: number | boolean;
+  timestamp?: string;
+  sender_id?: string;
+};
 
 /**
  * Manda un correo desde la cuenta del usuario.
@@ -179,13 +193,13 @@ export type MensajeUnipile = {
  * intentos y quemaban el lead sin que saliera nada.
  */
 export async function enviarCorreo(opciones: {
-  accountId: string
-  destinatario: string
-  asunto: string
-  cuerpo: string
+  accountId: string;
+  destinatario: string;
+  asunto: string;
+  cuerpo: string;
 }): Promise<MensajeEnviado> {
-  return pedir<MensajeEnviado>('/emails', {
-    method: 'POST',
+  return pedir<MensajeEnviado>("/emails", {
+    method: "POST",
     json: true,
     body: JSON.stringify({
       account_id: opciones.accountId,
@@ -193,7 +207,7 @@ export async function enviarCorreo(opciones: {
       subject: opciones.asunto,
       body: opciones.cuerpo,
     }),
-  })
+  });
 }
 
 export async function listarMensajes(
@@ -202,8 +216,46 @@ export async function listarMensajes(
 ): Promise<{ items: MensajeUnipile[] }> {
   return pedir<{ items: MensajeUnipile[] }>(
     `/chats/${encodeURIComponent(chatId)}/messages?limit=${limite}`,
-    { method: 'GET' },
-  )
+    { method: "GET" },
+  );
+}
+
+export type CorreoUnipile = {
+  id: string;
+  /** Identificador RFC 5322. No es el mismo que `id`. */
+  message_id?: string;
+  thread_id?: string;
+  date?: string;
+  role?: string;
+  subject?: string;
+  body_plain?: string;
+  from_attendee?: { identifier?: string; display_name?: string };
+};
+
+/**
+ * Correos RECIBIDOS por una cuenta.
+ *
+ * El correo tiene su propio endpoint, igual que al enviar: `/chats` es la API de
+ * mensajería de LinkedIn e Instagram y no sabe nada de un buzón.
+ *
+ * `role=inbox` es lo que separa lo que nos escriben de lo que escribimos: en un
+ * hilo de correo nuestros propios envíos vuelven a aparecer al listar, y sin
+ * este filtro el agente se contestaría a sí mismo.
+ */
+export async function listarCorreos(opciones: {
+  accountId: string;
+  desde?: Date;
+  limite?: number;
+}): Promise<{ items: CorreoUnipile[] }> {
+  const params = new URLSearchParams({
+    account_id: opciones.accountId,
+    role: "inbox",
+    limit: String(opciones.limite ?? 50),
+  });
+  if (opciones.desde) params.set("after", opciones.desde.toISOString());
+  return pedir<{ items: CorreoUnipile[] }>(`/emails?${params.toString()}`, {
+    method: "GET",
+  });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -211,17 +263,19 @@ export async function listarMensajes(
 /* -------------------------------------------------------------------------- */
 
 export type CuentaUnipile = {
-  id: string
-  type: string
-  name: string
-  created_at: string
-  sources?: { id: string; status: string }[]
-}
+  id: string;
+  type: string;
+  name: string;
+  created_at: string;
+  sources?: { id: string; status: string }[];
+};
 
 /** Cuentas ya conectadas en Unipile. Se usa para sincronizarlas al dashboard. */
 export async function listarCuentas(): Promise<CuentaUnipile[]> {
-  const r = await pedir<{ items?: CuentaUnipile[] }>('/accounts?limit=100', { method: 'GET' })
-  return r.items ?? []
+  const r = await pedir<{ items?: CuentaUnipile[] }>("/accounts?limit=100", {
+    method: "GET",
+  });
+  return r.items ?? [];
 }
 
 /**
@@ -232,42 +286,54 @@ export async function listarCuentas(): Promise<CuentaUnipile[]> {
  * en la nuestra. Nosotros nunca vemos ni almacenamos esa contraseña.
  */
 export async function crearEnlaceDeConexion(opciones: {
-  proveedores: UnipileProvider[]
-  urlExito: string
-  urlFallo: string
-  urlAviso?: string
-  referencia?: string
-  minutosDeVida?: number
+  proveedores: UnipileProvider[];
+  urlExito: string;
+  urlFallo: string;
+  urlAviso?: string;
+  referencia?: string;
+  minutosDeVida?: number;
 }): Promise<{ url: string }> {
-  const { base } = configuracion()
-  const expira = new Date(Date.now() + (opciones.minutosDeVida ?? 30) * 60_000)
+  const { base } = configuracion();
+  const expira = new Date(Date.now() + (opciones.minutosDeVida ?? 30) * 60_000);
 
-  return pedir<{ url: string }>('/hosted/accounts/link', {
-    method: 'POST',
+  return pedir<{ url: string }>("/hosted/accounts/link", {
+    method: "POST",
     json: true,
     body: JSON.stringify({
-      type: 'create',
+      type: "create",
       providers: opciones.proveedores,
       // Unipile necesita saber a qué instancia suya volver.
-      api_url: base.replace(/\/api\/v1$/, ''),
+      api_url: base.replace(/\/api\/v1$/, ""),
       expiresOn: expira.toISOString(),
       success_redirect_url: opciones.urlExito,
       failure_redirect_url: opciones.urlFallo,
       ...(opciones.urlAviso ? { notify_url: opciones.urlAviso } : {}),
       ...(opciones.referencia ? { name: opciones.referencia } : {}),
     }),
-  })
+  });
 }
 
 /** Tipo de cuenta de Unipile → canal nuestro. */
-export function canalDeProveedor(tipo: string): 'linkedin' | 'instagram' | 'email' | null {
-  const t = tipo.toUpperCase()
-  if (t === 'LINKEDIN') return 'linkedin'
-  if (t === 'INSTAGRAM') return 'instagram'
-  if (['GOOGLE', 'GOOGLE_OAUTH', 'MICROSOFT', 'OUTLOOK', 'IMAP', 'MAIL', 'ICLOUD'].includes(t)) {
-    return 'email'
+export function canalDeProveedor(
+  tipo: string,
+): "linkedin" | "instagram" | "email" | null {
+  const t = tipo.toUpperCase();
+  if (t === "LINKEDIN") return "linkedin";
+  if (t === "INSTAGRAM") return "instagram";
+  if (
+    [
+      "GOOGLE",
+      "GOOGLE_OAUTH",
+      "MICROSOFT",
+      "OUTLOOK",
+      "IMAP",
+      "MAIL",
+      "ICLOUD",
+    ].includes(t)
+  ) {
+    return "email";
   }
-  return null
+  return null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -275,42 +341,42 @@ export function canalDeProveedor(tipo: string): 'linkedin' | 'instagram' | 'emai
 /* -------------------------------------------------------------------------- */
 
 export type WebhookMensaje = {
-  event?: string
-  account_id?: string
-  account_type?: string
-  account_info?: { user_id?: string; type?: string; feature?: string }
-  chat_id?: string
-  message_id?: string
-  message?: string
-  timestamp?: string
-  sender?: Asistente
+  event?: string;
+  account_id?: string;
+  account_type?: string;
+  account_info?: { user_id?: string; type?: string; feature?: string };
+  chat_id?: string;
+  message_id?: string;
+  message?: string;
+  timestamp?: string;
+  sender?: Asistente;
   /** Todos los que están en la conversación, nosotros incluidos. */
-  attendees?: Asistente[]
+  attendees?: Asistente[];
   /** Lo dice Unipile directamente: true si el mensaje lo mandamos nosotros. */
-  is_sender?: boolean
-}
+  is_sender?: boolean;
+};
 
 export type Asistente = {
-  attendee_id?: string
-  attendee_name?: string
-  attendee_provider_id?: string
-  attendee_profile_url?: string
-  attendee_specifics?: { provider?: string; public_identifier?: string }
-}
+  attendee_id?: string;
+  attendee_name?: string;
+  attendee_provider_id?: string;
+  attendee_profile_url?: string;
+  attendee_specifics?: { provider?: string; public_identifier?: string };
+};
 
 export type EventoEntrante = {
-  esNuestro: boolean
-  messageId: string
-  chatId: string
-  accountId: string
-  texto: string
-  remitenteProviderId: string | null
-  remitenteNombre: string | null
-  remitenteUrl: string | null
+  esNuestro: boolean;
+  messageId: string;
+  chatId: string;
+  accountId: string;
+  texto: string;
+  remitenteProviderId: string | null;
+  remitenteNombre: string | null;
+  remitenteUrl: string | null;
   /** El @usuario del prospecto: la única clave que casa entre envío y respuesta. */
-  remitenteUsuario: string | null
-  ocurridoEn: Date
-}
+  remitenteUsuario: string | null;
+  ocurridoEn: Date;
+};
 
 /**
  * Normaliza el webhook y, sobre todo, dice si el mensaje lo hemos enviado
@@ -325,15 +391,17 @@ export type EventoEntrante = {
  * La forma de distinguirlo que documenta Unipile es comparar
  * `account_info.user_id` con `sender.attendee_provider_id`.
  */
-export function interpretarWebhook(payload: WebhookMensaje): EventoEntrante | null {
-  if (payload.event && payload.event !== 'message_received') return null
+export function interpretarWebhook(
+  payload: WebhookMensaje,
+): EventoEntrante | null {
+  if (payload.event && payload.event !== "message_received") return null;
 
-  const messageId = payload.message_id
-  const chatId = payload.chat_id
-  if (!messageId || !chatId) return null
+  const messageId = payload.message_id;
+  const chatId = payload.chat_id;
+  if (!messageId || !chatId) return null;
 
-  const nuestroUserId = payload.account_info?.user_id
-  const remitente = payload.sender?.attendee_provider_id ?? null
+  const nuestroUserId = payload.account_info?.user_id;
+  const remitente = payload.sender?.attendee_provider_id ?? null;
 
   /**
    * `is_sender` es la respuesta directa a "¿lo he escrito yo?" y es la que vale.
@@ -351,7 +419,7 @@ export function interpretarWebhook(payload: WebhookMensaje): EventoEntrante | nu
    */
   const esNuestro =
     payload.is_sender === true ||
-    Boolean(nuestroUserId && remitente && nuestroUserId === remitente)
+    Boolean(nuestroUserId && remitente && nuestroUserId === remitente);
 
   /**
    * El @usuario del prospecto, que es la ÚNICA clave estable para reencontrarlo.
@@ -364,29 +432,35 @@ export function interpretarWebhook(payload: WebhookMensaje): EventoEntrante | nu
    */
   const otros = (payload.attendees ?? []).filter(
     (a) => a.attendee_provider_id !== payload.sender?.attendee_provider_id,
-  )
-  const conversador = esNuestro ? otros[0] : payload.sender
+  );
+  const conversador = esNuestro ? otros[0] : payload.sender;
   const usuario =
     conversador?.attendee_specifics?.public_identifier ??
-    usuarioDeUrlDePerfil(conversador?.attendee_profile_url ?? null)
+    usuarioDeUrlDePerfil(conversador?.attendee_profile_url ?? null);
 
   return {
     esNuestro,
     messageId,
     chatId,
-    accountId: payload.account_id ?? '',
-    texto: payload.message ?? '',
+    accountId: payload.account_id ?? "",
+    texto: payload.message ?? "",
     remitenteProviderId: remitente,
     remitenteNombre: payload.sender?.attendee_name ?? null,
     remitenteUrl: payload.sender?.attendee_profile_url ?? null,
     remitenteUsuario: usuario ?? null,
     ocurridoEn: payload.timestamp ? new Date(payload.timestamp) : new Date(),
-  }
+  };
 }
 
 /** Canal de la campaña → tipo de cuenta de Unipile. */
-export function proveedorDeCanal(canal: 'linkedin' | 'email' | 'instagram'): UnipileProvider {
-  return canal === 'linkedin' ? 'LINKEDIN' : canal === 'instagram' ? 'INSTAGRAM' : 'GOOGLE'
+export function proveedorDeCanal(
+  canal: "linkedin" | "email" | "instagram",
+): UnipileProvider {
+  return canal === "linkedin"
+    ? "LINKEDIN"
+    : canal === "instagram"
+      ? "INSTAGRAM"
+      : "GOOGLE";
 }
 
 /* -------------------------------------------------------------------------- */
@@ -394,18 +468,16 @@ export function proveedorDeCanal(canal: 'linkedin' | 'email' | 'instagram'): Uni
 /* -------------------------------------------------------------------------- */
 
 export type UsuarioUnipile = {
-  provider_id?: string
-  id?: string
-  public_identifier?: string
-  name?: string
+  provider_id?: string;
+  id?: string;
+  public_identifier?: string;
+  name?: string;
   /**
    * Grado de conexión en LinkedIn: "DISTANCE_1" es contacto directo.
    * A quien no lo es no se le puede mandar un DM, solo una invitación.
    */
-  network_distance?: string
-}
-
-
+  network_distance?: string;
+};
 
 /**
  * Recorta la nota SIN cortar una frase por la mitad.
@@ -416,32 +488,39 @@ export type UsuarioUnipile = {
  * palabra entera.
  */
 export function notaDeInvitacion(texto: string): string {
-  const limpio = texto.trim()
-  if (limpio.length <= MAX_CARACTERES_INVITACION) return limpio
+  const limpio = texto.trim();
+  if (limpio.length <= MAX_CARACTERES_INVITACION) return limpio;
 
-  const trozo = limpio.slice(0, MAX_CARACTERES_INVITACION)
-  const finDeFrase = Math.max(trozo.lastIndexOf('. '), trozo.lastIndexOf('? '), trozo.lastIndexOf('! '))
-  if (finDeFrase > MAX_CARACTERES_INVITACION * 0.5) return trozo.slice(0, finDeFrase + 1)
+  const trozo = limpio.slice(0, MAX_CARACTERES_INVITACION);
+  const finDeFrase = Math.max(
+    trozo.lastIndexOf(". "),
+    trozo.lastIndexOf("? "),
+    trozo.lastIndexOf("! "),
+  );
+  if (finDeFrase > MAX_CARACTERES_INVITACION * 0.5)
+    return trozo.slice(0, finDeFrase + 1);
 
   // Los puntos suspensivos cuentan: si se recorta a MAX y se añaden, el
   // resultado tiene MAX+1 y lo rechaza la validación de dos líneas más abajo.
-  const finDePalabra = trozo.lastIndexOf(' ')
-  const corte = finDePalabra > 0 ? finDePalabra : MAX_CARACTERES_INVITACION - 1
-  return `${trozo.slice(0, corte).trimEnd()}…`
+  const finDePalabra = trozo.lastIndexOf(" ");
+  const corte = finDePalabra > 0 ? finDePalabra : MAX_CARACTERES_INVITACION - 1;
+  return `${trozo.slice(0, corte).trimEnd()}…`;
 }
 
 /** De una URL de perfil de LinkedIn saca el identificador público. */
 /** De una URL de perfil de Instagram o LinkedIn saca el nombre de usuario. */
-export function usuarioDeUrlDePerfil(url: string | null | undefined): string | null {
-  if (!url) return null
-  const m = url.match(/(?:instagram\.com|linkedin\.com\/in)\/([^/?#]+)/i)
-  return m?.[1] ? decodeURIComponent(m[1]).toLowerCase() : null
+export function usuarioDeUrlDePerfil(
+  url: string | null | undefined,
+): string | null {
+  if (!url) return null;
+  const m = url.match(/(?:instagram\.com|linkedin\.com\/in)\/([^/?#]+)/i);
+  return m?.[1] ? decodeURIComponent(m[1]).toLowerCase() : null;
 }
 
 export function identificadorDeUrlLinkedin(url: string | null): string | null {
-  if (!url) return null
-  const m = url.match(/linkedin\.com\/in\/([^/?#]+)/i)
-  return m?.[1] ? decodeURIComponent(m[1]) : null
+  if (!url) return null;
+  const m = url.match(/linkedin\.com\/in\/([^/?#]+)/i);
+  return m?.[1] ? decodeURIComponent(m[1]) : null;
 }
 
 /**
@@ -458,6 +537,6 @@ export async function obtenerUsuario(
 ): Promise<UsuarioUnipile> {
   return pedir<UsuarioUnipile>(
     `/users/${encodeURIComponent(identificador)}?account_id=${encodeURIComponent(accountId)}`,
-    { method: 'GET' },
-  )
+    { method: "GET" },
+  );
 }

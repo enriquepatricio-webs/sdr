@@ -6,12 +6,27 @@ import {
   accounts,
   campaigns,
   leads,
+  normalizedEmail,
   normalizedHandle,
   touches,
 } from "@/lib/db/schema";
 import { jsonError, serverError } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * Un parámetro que no viene, viene vacío o viene con la palabra "null".
+ *
+ * n8n interpola `{{ $json.usuario }}` dentro de la URL, y cuando ese campo es
+ * nulo lo que llega literalmente es la cadena "null". Sin esto se buscaba un
+ * lead cuyo usuario de Instagram fuera "null" y el fallo no daba ningún error:
+ * simplemente no encontraba a nadie, exactamente igual que si no existiera.
+ */
+function parametro(url: URL, nombre: string): string | null {
+  const v = url.searchParams.get(nombre)?.trim();
+  if (!v || v === "null" || v === "undefined") return null;
+  return v;
+}
 
 /**
  * Encuentra a quién pertenece un mensaje entrante, y devuelve el hilo completo.
@@ -32,9 +47,15 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const chatId = url.searchParams.get("chat_id");
-  const providerId = url.searchParams.get("provider_id");
-  const accountId = url.searchParams.get("account_id");
+  const chatId = parametro(url, "chat_id");
+  const providerId = parametro(url, "provider_id");
+  const accountId = parametro(url, "account_id");
+  /**
+   * La dirección del prospecto. Es la ÚNICA clave que casa en correo: al enviar
+   * un email no se guarda ningún chat_id, porque el correo no va por /chats y no
+   * hay conversación que abrir.
+   */
+  const email = parametro(url, "email");
   /**
    * El @usuario del prospecto. Es la clave BUENA.
    *
@@ -43,10 +64,10 @@ export async function GET(request: Request) {
    * otro distinto cuando contestan, y su provider_id no es el que trae el
    * scraper. El nombre de usuario es el mismo en los dos sitios.
    */
-  const usuario = url.searchParams.get("usuario");
+  const usuario = parametro(url, "usuario");
 
-  if (!chatId && !providerId) {
-    return jsonError("Hace falta chat_id o provider_id.");
+  if (!chatId && !providerId && !usuario && !email) {
+    return jsonError("Hace falta chat_id, provider_id, usuario o email.");
   }
 
   try {
@@ -95,6 +116,48 @@ export async function GET(request: Request) {
         )
         .orderBy(desc(leads.updatedAt));
       lead = porUsuario?.lead;
+    }
+
+    // Por dirección de correo, acotada a la empresa dueña del buzón. Aquí no
+    // se acepta ambigüedad entre empresas ni aunque falte account_id: una
+    // dirección de correo es la misma persona en todas partes, y contestarle
+    // con el playbook del cliente equivocado es peor que no contestar.
+    if (!lead && email) {
+      const empresa = accountId
+        ? ((
+            await db
+              .select({ id: accounts.workspaceId })
+              .from(accounts)
+              .where(eq(accounts.unipileAccountId, accountId))
+          )[0]?.id ?? null)
+        : null;
+
+      const candidatos = await db
+        .select({ lead: leads })
+        .from(leads)
+        .innerJoin(campaigns, eq(campaigns.id, leads.campaignId))
+        .where(
+          and(
+            sql`${normalizedEmail(leads.email)} = ${normalizedEmail(sql`${email}`)}`,
+            notInArray(leads.status, [...TERMINAL_LEAD_STATUSES]),
+            ...(empresa ? [eq(campaigns.workspaceId, empresa)] : []),
+          ),
+        )
+        .orderBy(desc(leads.updatedAt))
+        .limit(2);
+
+      if (candidatos.length > 1 && !empresa) {
+        return NextResponse.json(
+          {
+            encontrado: false,
+            ambiguo: true,
+            motivo:
+              "Esa dirección está en campañas de más de una empresa y el mensaje no dice por qué buzón ha entrado. Pasa account_id.",
+          },
+          { status: 409 },
+        );
+      }
+      lead = candidatos[0]?.lead;
     }
 
     if (!lead && providerId) {
@@ -148,7 +211,8 @@ export async function GET(request: Request) {
           encontrado: false,
           // Un mensaje de alguien a quien no hemos escrito nosotros. No es un
           // error: puede ser tráfico normal de la cuenta.
-          motivo: "No hay ningún lead activo con ese chat_id ni provider_id.",
+          motivo:
+            "No hay ningún lead activo con ese chat_id, usuario, email ni provider_id.",
         },
         { status: 404 },
       );
