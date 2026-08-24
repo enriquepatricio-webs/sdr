@@ -31,7 +31,6 @@ import { ACTORES_LECTURA, runSync } from "./apify";
 import {
   enviarEnChat,
   iniciarChat,
-  listarMensajes,
   obtenerUsuario,
 } from "./unipile";
 
@@ -768,13 +767,29 @@ export async function enviosRecientes(
 /**
  * Si en el hilo hay alguien pidiendo que le dejen en paz.
  *
- * Se mira ANTES de cada mensaje que no sea el primero. Es la única forma de
- * respetar esa petición sin depender de que el webhook de Unipile esté
- * conectado, y cuesta una llamada por contacto al que se iba a escribir.
+ * Se mira ANTES de cada mensaje que no sea el primero, y se mira contra
+ * NUESTROS propios toques entrantes, no contra Unipile.
+ *
+ * Antes preguntaba a Unipile por el `chat_id` guardado, y ese identificador no
+ * se puede volver a leer: es el que devuelve la API al CREAR el chat, y en
+ * cuanto la conversación existe de verdad responde 404 "Chat not found". El 404
+ * salía por la excepción del ciclo, sumaba un intento al contacto y a los tres
+ * el contacto se descartaba solo. Es decir: TODO el que recibía el primer DM
+ * acababa descartado sin llegar a recibir el recurso, y en el registro parecía
+ * un usuario irresoluble.
+ *
+ * Leerlo de la base es además más fiable: el webhook de entrantes y el barrido
+ * dejan ahí cada mensaje que nos llega, y así decidir si se puede escribir a
+ * alguien no depende de ninguna llamada de red.
  */
-export async function pidioQueLeDejen(chatId: string): Promise<boolean> {
-  const { items } = await listarMensajes(chatId, 20);
-  return items.some((m) => !m.is_sender && m.text && pideQueLeDejen(m.text));
+export async function pidioQueLeDejen(leadId: string): Promise<boolean> {
+  const entrantes = await db
+    .select({ body: touches.body })
+    .from(touches)
+    .where(and(eq(touches.leadId, leadId), eq(touches.direction, "in")))
+    .orderBy(desc(touches.createdAt))
+    .limit(20);
+  return entrantes.some((t) => pideQueLeDejen(t.body));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1126,10 +1141,7 @@ export async function ejecutarCiclo(
         // Va ANTES de la rama de `pidiendo_follow`: estaba después, y como esa
         // rama termina siempre en `continue`, a quien decía "no me escribas"
         // mientras esperaba el follow no se le hacía ni caso.
-        if (
-          contacto.unipileChatId &&
-          (await pidioQueLeDejen(contacto.unipileChatId))
-        ) {
+        if (contacto.leadId && (await pidioQueLeDejen(contacto.leadId))) {
           if (await moverA(contacto, "descartado")) {
             resumen.descartados++;
             // Y el LEAD también: si solo se marca el contacto, el agente de
