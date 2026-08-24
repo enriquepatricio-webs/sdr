@@ -265,16 +265,47 @@ export async function POST(request: Request) {
         const r = await enviarEnChat(chatId, d.texto);
         messageId = r.message_id;
       } else {
-        if (!lead.providerId) {
+        /**
+         * Instagram. El `provider_id` guardado NO sirve para abrir un chat.
+         *
+         * Los leads que salen de Google Maps traen ahí el identificador de
+         * SITIO de Google —`ChIJ5eyG3VO5Z0AR8YGG0prk0nQ`—, no el de Instagram,
+         * y Unipile responde 500 provider_error. La campaña de El Sofá del
+         * Empresario se alimenta de Maps y llevaba treinta y cuatro envíos
+         * seguidos fallando, cero entregados, mientras las otras dos cuentas de
+         * Instagram —que sacan sus leads del scraper de Instagram— iban bien.
+         *
+         * Se resuelve como en LinkedIn: el id que tiene que reconocer Unipile
+         * lo da Unipile, a partir del @usuario, que sí es correcto.
+         */
+        let attendeeId = lead.providerId;
+
+        if (lead.instagramUsername) {
+          const perfil = await obtenerUsuario(
+            cuenta.unipileAccountId,
+            lead.instagramUsername,
+          );
+          attendeeId = perfil.provider_id ?? perfil.id ?? attendeeId;
+          // Se guarda para no volver a resolverlo en cada toque.
+          if (attendeeId && attendeeId !== lead.providerId) {
+            await db
+              .update(leads)
+              .set({ providerId: attendeeId })
+              .where(eq(leads.id, lead.id));
+          }
+        }
+
+        if (!attendeeId) {
           throw new UnipileError(
-            "El lead no tiene provider_id para abrir conversación.",
+            "El lead no tiene ni @usuario de Instagram ni provider_id: no hay a quién escribir.",
             400,
             "",
           );
         }
+
         const r = await iniciarChat({
           accountId: cuenta.unipileAccountId,
-          attendeeId: lead.providerId,
+          attendeeId,
           texto: d.texto,
         });
         messageId = r.message_id;
