@@ -1264,24 +1264,38 @@ export async function ejecutarCiclo(
       enConversacion: 0,
       descartados: 0,
       borradores: 0,
-      sinCupo: cupo.hay ? null : { motivo: cupo.motivo, detalle: cupo.detalle },
+      sinCupo: (cupo.hay
+        ? null
+        : { motivo: cupo.motivo, detalle: cupo.detalle }) as {
+        motivo: string;
+        detalle?: string;
+      } | null,
     };
 
-    /* ---- 2 bis. La ventana de envío también vale para el imán ------------ */
-    // Sin esto el cron manda DMs a las cuatro de la mañana y en fin de semana:
-    // solo miraba el cupo, que no sabe nada de horas decentes.
+    /* ---- 2 bis. La ventana de envío, pero solo para lo que no ha pedido -- */
+    /**
+     * Un imán no es prospección en frío, y no puede tratarse igual.
+     *
+     * La ventana existe para no meterse en el móvil de alguien a las cuatro de
+     * la mañana sin que te haya llamado nadie. Aquí SÍ te han llamado: acaban
+     * de comentar la palabra pidiendo el recurso. Hacerle esperar a mañana a
+     * quien acaba de escribir "RESEÑA" a las once de la noche rompe la única
+     * promesa del embudo —"te lo mando ahora mismo"— y es exactamente lo que
+     * hace que no se parezca a las herramientas que la gente ya usa.
+     *
+     * Así que la ventana solo frena lo que sale por iniciativa nuestra: el
+     * "¿qué tal?" de después de entregar. Pedir el follow y entregar el recurso
+     * son respuestas, y una respuesta se da cuando te preguntan.
+     *
+     * El tope horario de la cuenta (8/h en Instagram) sigue aplicando siempre:
+     * eso es lo que protege la cuenta, no la hora del día.
+     */
     const [campana] = await db
       .select({ ventana: campaigns.sendingWindow })
       .from(campaigns)
       .where(eq(campaigns.id, await campanaDelIman(iman)));
 
     const fuera = campana ? fueraDeVentana(campana.ventana, new Date()) : null;
-    if (fuera) {
-      return {
-        ...resumen,
-        sinCupo: { motivo: "fuera_de_ventana", detalle: fuera },
-      };
-    }
 
     /* ---- 3. Avanzar a cada uno un paso ---------------------------------- */
     for (const contacto of await contactosPendientes(iman.id, LOTE)) {
@@ -1388,6 +1402,13 @@ export async function ejecutarCiclo(
 
         if (contacto.state === "entregado") {
           if (!iman.pitchMeeting) continue;
+
+          // Lo único que sale por iniciativa nuestra, y por eso lo único que
+          // espera a que sean horas.
+          if (fuera) {
+            resumen.sinCupo ??= { motivo: "fuera_de_ventana", detalle: fuera };
+            continue;
+          }
 
           /**
            * Si ya está hablando contigo, no le preguntes "¿qué tal?".
