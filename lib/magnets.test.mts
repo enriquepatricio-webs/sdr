@@ -9,6 +9,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   COMENTARIOS_POR_RELECTURA,
+  NUDGE_MAX_MINUTOS,
+  NUDGE_MIN_MINUTOS,
   COMENTARIOS_PRIMERA_LECTURA,
   MAX_PETICIONES_DE_FOLLOW,
   PASO_DE_ESTADO,
@@ -19,6 +21,7 @@ import {
   TRANSICIONES,
   comentariosConLaClave,
   minutosEntreLecturas,
+  minutosHastaElNudge,
   mencionaClave,
   normalizar,
   normalizarUsuario,
@@ -234,6 +237,30 @@ test("se lee deprisa cuando el post es nuevo y se afloja despues", () => {
   // Y la relectura tiene que pedir bastante menos que la primera, o el coste
   // vuelve a crecer con el tamaño del post en cada vuelta.
   assert.ok(COMENTARIOS_POR_RELECTURA < COMENTARIOS_PRIMERA_LECTURA);
+});
+
+test("el rato hasta el «que tal» es fijo por persona y distinto entre personas", () => {
+  // Si se sorteara en cada vuelta, el plazo cambiaria cada dos minutos y en
+  // cuanto saliera un numero bajo se mandaria antes de tiempo.
+  const a = minutosHastaElNudge("11111111-1111-1111-1111-111111111111");
+  assert.equal(a, minutosHastaElNudge("11111111-1111-1111-1111-111111111111"));
+
+  // Y no puede ser el mismo para todos, que es lo que convierte una
+  // conversacion en un envio masivo.
+  const ids = Array.from(
+    { length: 40 },
+    (_, i) => `contacto-${i}-abcdefghijklmnop`,
+  );
+  const distintos = new Set(ids.map(minutosHastaElNudge));
+  assert.ok(distintos.size > 5, `solo ${distintos.size} plazos distintos`);
+
+  for (const id of ids) {
+    const m = minutosHastaElNudge(id);
+    assert.ok(m >= NUDGE_MIN_MINUTOS && m <= NUDGE_MAX_MINUTOS, `${id}: ${m}`);
+  }
+
+  // Preguntar "que te ha parecido" a los dos minutos delata al robot.
+  assert.ok(NUDGE_MIN_MINUTOS >= 30);
 });
 
 test("a quien contesta se le mira la lista de seguidores de verdad", () => {

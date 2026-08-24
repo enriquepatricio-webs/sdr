@@ -1,6 +1,8 @@
 import { and, eq, isNull, ne } from 'drizzle-orm'
 import { db } from './db'
-import { playbooks } from './db/schema'
+import { campaigns, icps, leads, playbooks, workspaces } from './db/schema'
+import { construirSystemPrompt } from './agent-prompt'
+import { ajustesEfectivos, playbookActivo } from './workspace'
 
 /**
  * Deja `id` como el único playbook activo DE SU ÁMBITO.
@@ -37,4 +39,46 @@ export async function activarPlaybook(id: string): Promise<void> {
       .where(and(eq(playbooks.isActive, true), ne(playbooks.id, id), mismoAmbito)),
     db.update(playbooks).set({ isActive: true }).where(eq(playbooks.id, id)),
   ])
+}
+
+/**
+ * El prompt del agente para una campaña, montado una sola vez.
+ *
+ * Vive aquí y no en la ruta de n8n porque hay dos consumidores: el agente de
+ * conversaciones, que lo pide por HTTP, y el ciclo del imán, que redacta desde
+ * dentro del servidor. Con una copia en cada sitio, endurecer el tono en uno
+ * dejaría el otro hablando como antes.
+ */
+export async function promptDeCampana(
+  campaignId: string,
+  leadId?: string | null,
+): Promise<string | null> {
+  const [fila] = await db
+    .select({ campaign: campaigns, icp: icps, empresa: workspaces })
+    .from(campaigns)
+    .leftJoin(icps, eq(campaigns.icpId, icps.id))
+    .leftJoin(workspaces, eq(campaigns.workspaceId, workspaces.id))
+    .where(eq(campaigns.id, campaignId))
+  if (!fila) return null
+
+  const ajustes = await ajustesEfectivos(fila.empresa?.id)
+  const playbook = await playbookActivo(fila.empresa?.id)
+  if (!playbook) return null
+
+  let enriquecimiento = null
+  if (leadId) {
+    const [lead] = await db
+      .select({ enrichment: leads.enrichment })
+      .from(leads)
+      .where(eq(leads.id, leadId))
+    enriquecimiento = lead?.enrichment ?? null
+  }
+
+  return construirSystemPrompt(playbook, fila.icp, {
+    empresa: ajustes.companyName,
+    canal: fila.campaign.channel,
+    vendedora: fila.empresa,
+    lecciones: ajustes.lessons,
+    enriquecimiento,
+  })
 }

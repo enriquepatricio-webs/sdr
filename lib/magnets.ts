@@ -28,6 +28,8 @@ import {
   touches,
 } from "./db/schema";
 import { ACTORES_LECTURA, runSync } from "./apify";
+import { chat } from "./openrouter";
+import { promptDeCampana } from "./playbook";
 import { enviarEnConversacion, obtenerUsuario } from "./unipile";
 
 export type EstadoIman = (typeof magnetStateEnum.enumValues)[number];
@@ -122,14 +124,85 @@ export function pideQueLeDejen(texto: string): boolean {
 }
 
 /**
- * Lo que se manda después del recurso para intentar la reunión.
+ * Lo que se manda si el agente no puede redactar el "¿qué tal?".
  *
- * Es constante y no un ajuste porque el usuario pidió menos cosas que tocar, y
- * porque a partir de aquí la conversación la lleva el agente: esto solo abre la
- * puerta. Sin cifras, por la misma razón que el resto del sistema.
+ * Es el respaldo, no el plan: mandar el mismo texto a todo el mundo un rato
+ * después de entregar el recurso se nota, y lo que se pidió es que parezca una
+ * persona. Sin cifras, por la misma razón que el resto del sistema.
  */
 export const PITCH_REUNION =
-  "Por cierto, si te viene bien, te cuento en 15 minutos cómo lo aplicamos nosotros a un caso como el tuyo. ¿Te va bien esta semana o la que viene?";
+  "Oye, ¿le has podido echar un ojo? Si quieres te cuento en quince minutos cómo lo aplicamos a un caso como el tuyo. ¿Te viene bien esta semana?";
+
+/**
+ * Cuánto se espera desde que se entrega el recurso hasta preguntar qué tal.
+ *
+ * Preguntar "¿qué te ha parecido?" dos minutos después de mandar algo delata a
+ * un robot: no le ha dado tiempo a nadie a abrirlo. Entre cuarenta minutos y
+ * dos horas es lo que tardaría una persona en acordarse.
+ */
+export const NUDGE_MIN_MINUTOS = 40;
+export const NUDGE_MAX_MINUTOS = 120;
+
+/**
+ * El rato concreto de ESE contacto, siempre el mismo.
+ *
+ * Se deriva de su id en vez de sortearlo en cada vuelta: con `Math.random()` el
+ * plazo cambiaría cada dos minutos y, en cuanto saliera un número bajo, se
+ * mandaría antes de tiempo. Y es distinto para cada persona, que es justo lo
+ * que hace que no parezca un lote.
+ */
+export function minutosHastaElNudge(contactoId: string): number {
+  let h = 0;
+  for (const c of contactoId) h = (h * 31 + c.charCodeAt(0)) % 1_000_003;
+  return NUDGE_MIN_MINUTOS + (h % (NUDGE_MAX_MINUTOS - NUDGE_MIN_MINUTOS + 1));
+}
+
+/**
+ * El "¿qué tal?" lo escribe el agente, con el playbook de la empresa.
+ *
+ * Si falla —sin saldo, modelo caído— se manda el texto de respaldo: es mejor
+ * un mensaje algo genérico que dejar colgada una conversación que iba bien.
+ */
+export async function redactarQueTal(opciones: {
+  campaignId: string;
+  leadId: string;
+  nombre: string;
+  recursoPedido: string;
+  modelo: string;
+}): Promise<string> {
+  try {
+    const systemPrompt = await promptDeCampana(
+      opciones.campaignId,
+      opciones.leadId,
+    );
+    if (!systemPrompt) return PITCH_REUNION;
+
+    const r = await chat({
+      model: opciones.modelo,
+      maxTokens: 400,
+      temperature: 0.8,
+      messages: [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content: [
+            `Hace un rato ${opciones.nombre} comentó "${opciones.recursoPedido}" en una publicación nuestra, le pediste que te siguiera, te siguió y le mandaste el recurso. No ha dicho nada desde entonces.`,
+            "",
+            "Escríbele como le escribirías a alguien con quien ya has hablado hoy: pregúntale si le ha podido echar un ojo y ofrécele enseñarle cómo se aplica a su caso.",
+            "",
+            "Nada de presentarte otra vez ni de recordarle quién eres: ya lo sabe. Ni «espero que te haya gustado», que no lo dice nadie. Dos líneas como mucho, en el tono de un mensaje de Instagram, y cierra con una pregunta fácil de contestar.",
+            "",
+            "Devuelve SOLO el texto del mensaje.",
+          ].join("\n"),
+        },
+      ],
+    });
+    const texto = r.text.trim();
+    return texto.length > 0 && texto.length < 600 ? texto : PITCH_REUNION;
+  } catch {
+    return PITCH_REUNION;
+  }
+}
 
 /* -------------------------------------------------------------------------- */
 /* Comentarios                                                                 */
@@ -1279,12 +1352,65 @@ export async function ejecutarCiclo(
             } else if (aviso.motivo === "autopiloto_apagado") {
               resumen.borradores++;
             }
+            continue;
+          }
+
+          /**
+           * Ha dicho dos veces que ya sigue y no aparece. Se le da igualmente.
+           *
+           * No es ceder por ceder: la lista de seguidores viene acotada a los
+           * más recientes, así que puede fallar, y quien insiste dos veces casi
+           * siempre ha seguido de verdad. Perder a alguien que sí siguió cuesta
+           * mucho más que regalar un recurso, y quedarse callado después de que
+           * te digan "listo" dos veces es lo que hace que parezca un bot roto.
+           */
+          if (
+            contacto.followAsks >= MAX_PETICIONES_DE_FOLLOW &&
+            (await contestoDespuesDePedirle(contacto))
+          ) {
+            if (
+              await moverA(contacto, "verificado", { verifiedAt: new Date() })
+            ) {
+              resumen.verificados++;
+              await db.insert(runLogs).values({
+                workflow: "iman",
+                leadId: contacto.leadId,
+                level: "info",
+                message: `@${contacto.username} dice que sigue y no sale en la lista, pero ha insistido: se le entrega el recurso igualmente.`,
+                payload: { magnetId: iman.id, contactId: contacto.id },
+              });
+            }
           }
           continue;
         }
 
         if (presupuesto <= 0) continue;
-        if (contacto.state === "entregado" && !iman.pitchMeeting) continue;
+
+        if (contacto.state === "entregado") {
+          if (!iman.pitchMeeting) continue;
+
+          /**
+           * Si ya está hablando contigo, no le preguntes "¿qué tal?".
+           *
+           * En cuanto contesta, la conversación es del agente: la ve entera y
+           * responde en segundos por el webhook. Soltarle encima un mensaje
+           * programado es exactamente lo que delata a un bot.
+           */
+          if (await contestoDespuesDePedirle(contacto)) {
+            if (await moverA(contacto, "en_conversacion"))
+              resumen.enConversacion++;
+            continue;
+          }
+
+          // Y si no ha dicho nada, se le da su rato antes de preguntar.
+          const entregadoEn = contacto.deliveredAt?.getTime();
+          if (
+            entregadoEn &&
+            Date.now() - entregadoEn < minutosHastaElNudge(contacto.id) * 60_000
+          ) {
+            continue;
+          }
+        }
 
         const identidad = await asegurarLead(iman, contacto, cuenta);
         if (
@@ -1329,7 +1455,13 @@ export async function ejecutarCiclo(
               ? iman.followMessage
               : contacto.state === "verificado"
                 ? iman.resource
-                : PITCH_REUNION;
+                : await redactarQueTal({
+                    campaignId: await campanaDelIman(iman),
+                    leadId: identidad.leadId,
+                    nombre: contacto.fullName || contacto.username,
+                    recursoPedido: iman.keyword,
+                    modelo: ajustes.openrouterModel,
+                  });
 
           presupuesto--;
           envio = await enviarDm({

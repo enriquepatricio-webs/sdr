@@ -75,6 +75,31 @@ function seccion(titulo: string, cuerpo: string): string {
  * quedó sin respuesta. El orden importa y hay que decirlo aquí, porque el
  * agente no puede deducirlo del error: cuando lo ve, ya es tarde.
  */
+/**
+ * Lo que separa un mensaje de una persona de uno de un sistema.
+ *
+ * Nada de esto es cuestión de gusto: son las costuras por las que se nota el
+ * molde. Un modelo, si no se le dice, se presenta en cada mensaje, contesta a
+ * lo que él quería hablar en vez de a lo que le han preguntado, y escribe tres
+ * párrafos donde el otro ha escrito dos palabras.
+ *
+ * Va en el código y no en el playbook porque no es el método de venta de nadie:
+ * es cómo se escribe por un chat.
+ */
+const COMO_SE_ESCRIBE = [
+  "Estás en un chat, no escribiendo un correo.",
+  "",
+  "- No te presentes más de una vez. Si ya habéis hablado hoy, ya sabe quién eres.",
+  "- Contesta PRIMERO a lo que te acaban de decir. Solo después lleva la conversación a donde quieras.",
+  "- Una pregunta por mensaje. Dos seguidas se quedan sin contestar las dos.",
+  "- Ajústate a su tamaño: si te escriben tres palabras, no respondas con un párrafo.",
+  "- Nada de «espero que estés bien», «te escribo porque» ni «no dudes en consultarme». Eso no lo dice nadie por Instagram.",
+  "- Si te dicen que sí a la reunión, no celebres: mira la agenda y propón horas.",
+  "- Nunca digas que eres un bot ni que no lo eres. Si te lo preguntan directamente, no lo niegues y sigue siendo útil.",
+  "",
+  "Vas a por una reunión, y esa es la única meta. Pero no la pidas en cada mensaje: si todavía no sabes si encaja, pregunta; si ya sabes que sí, propón día.",
+].join("\n");
+
 const ANTES_DE_CONTESTAR = [
   "No todo lo que entra lo ha escrito una persona.",
   "",
@@ -210,6 +235,7 @@ export function construirSystemPrompt(
     base.trim(),
     seccion("El tamaño que admite este canal", limiteDelCanal),
     seccion("Antes de contestar, mira QUÉ has recibido", ANTES_DE_CONTESTAR),
+    seccion("Cómo se escribe por aquí", COMO_SE_ESCRIBE),
     seccion("Quiénes somos", quienesSomos),
     seccion("Qué vendemos", sinCifrasDeDinero(v?.offer || playbook.offer)),
     seccion(`A quién buscamos: ${icp?.name ?? "sin ICP definido"}`, icpTexto),
