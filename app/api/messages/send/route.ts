@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import {
@@ -26,7 +26,10 @@ import { ajustesEfectivos } from "@/lib/workspace";
 import { AVISO_SIN_PRECIOS, mencionaDinero } from "@/lib/sin-precios";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 60
+
+/** Fallos de envío seguidos antes de apartar un lead como irrecuperable. */
+const MAX_FALLOS_POR_LEAD = 3;
 
 const cuerpo = z.object({
   leadId: z.string().uuid(),
@@ -306,11 +309,35 @@ export async function POST(request: Request) {
         chatId,
       });
     } catch (err) {
-      // El toque se queda en 'fallido'. Nadie lo reintenta automáticamente.
+      // El toque se queda en 'fallido'. Nadie reintenta ESE envío.
       await db
         .update(touches)
         .set({ status: "fallido" })
         .where(eq(touches.id, toque.id));
+
+      /**
+       * Pero el LEAD sí vuelve a la cola, y eso no puede ser indefinido.
+       *
+       * Al fallar no se toca el lead, así que sigue en 'nuevo' y a los noventa
+       * minutos /api/leads/next lo entrega otra vez. Con un destinatario que no
+       * va a funcionar nunca —un @usuario sacado de una web que ya no existe—
+       * eso es un fallo cada hora y media, para siempre: veintisiete leads
+       * llegaron a producir noventa fallos en una sola mañana.
+       *
+       * Al tercer intento pasa a 'error', que es terminal, sale de la cola y
+       * aparece en el panel bajo "Con error" para que lo mire una persona.
+       */
+      const [{ n: fallosDelLead } = { n: 0 }] = await db
+        .select({ n: count() })
+        .from(touches)
+        .where(and(eq(touches.leadId, lead.id), eq(touches.status, "fallido")));
+
+      if (Number(fallosDelLead) >= MAX_FALLOS_POR_LEAD) {
+        await db
+          .update(leads)
+          .set({ status: "error", nextActionAt: null })
+          .where(eq(leads.id, lead.id));
+      }
       await db.insert(runLogs).values({
         workflow: "sdr-envio",
         leadId: lead.id,
