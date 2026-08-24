@@ -13,53 +13,81 @@ import type {
   Lecciones,
   Objection,
   QualificationCriterion,
-} from './db/schema'
-import { sinCifrasDeDinero } from './sin-precios'
+} from "./db/schema";
+import { sinCifrasDeDinero } from "./sin-precios";
 
 export type PlaybookParaPrompt = {
-  systemPrompt: string
-  offer: string
-  qualificationCriteria: QualificationCriterion[]
-  objections: Objection[]
-  bookingRules: BookingRules
-}
+  systemPrompt: string;
+  offer: string;
+  qualificationCriteria: QualificationCriterion[];
+  objections: Objection[];
+  bookingRules: BookingRules;
+};
 
 export type IcpParaPrompt = {
-  name: string
-  description: string | null
-  criteria: IcpSignal[]
-  disqualifiers: IcpSignal[]
-}
+  name: string;
+  description: string | null;
+  criteria: IcpSignal[];
+  disqualifiers: IcpSignal[];
+};
 
 /** La empresa para la que se vende en esta campaña. */
 export type EmpresaVendedora = {
-  name: string
-  website: string | null
-  context: string | null
-  scrapedContext: string | null
-  offer: string | null
-}
+  name: string;
+  website: string | null;
+  context: string | null;
+  scrapedContext: string | null;
+  offer: string | null;
+};
 
 export type ContextoPrompt = {
-  empresa: string
-  canal: 'linkedin' | 'email' | 'instagram'
+  empresa: string;
+  canal: "linkedin" | "email" | "instagram";
   /** Contexto de la empresa vendedora. Sustituye a `empresa` si viene. */
-  vendedora?: EmpresaVendedora | null
+  vendedora?: EmpresaVendedora | null;
   /** Lo aprendido de los resultados reales del propio sistema. */
-  lecciones?: Lecciones | null
+  lecciones?: Lecciones | null;
   /** Lo que se averiguó de ESTE prospecto antes de escribirle. */
-  enriquecimiento?: Enrichment | null
-}
+  enriquecimiento?: Enrichment | null;
+};
 
-const NOMBRE_CANAL: Record<ContextoPrompt['canal'], string> = {
-  linkedin: 'mensaje directo de LinkedIn',
-  instagram: 'mensaje directo de Instagram',
-  email: 'email',
-}
+const NOMBRE_CANAL: Record<ContextoPrompt["canal"], string> = {
+  linkedin: "mensaje directo de LinkedIn",
+  instagram: "mensaje directo de Instagram",
+  email: "email",
+};
 
 function seccion(titulo: string, cuerpo: string): string {
-  return cuerpo.trim() ? `\n\n# ${titulo}\n\n${cuerpo.trim()}` : ''
+  return cuerpo.trim() ? `\n\n# ${titulo}\n\n${cuerpo.trim()}` : "";
 }
+
+/**
+ * Dos cosas que el agente hizo mal la primera vez que contestó de verdad, y que
+ * no dependen del playbook de nadie: van en el código.
+ *
+ * La primera: contestó a una autorespuesta. Le escribió «cuando estés al otro
+ * lado, retomamos» a un buzón que solo devuelve un enlace. Gasta un envío del
+ * cupo del día y no lo lee nadie.
+ *
+ * La segunda: cerró el lead y DESPUÉS intentó despedirse. El sistema bloquea
+ * cualquier envío a un lead cerrado —eso está bien y no se toca—, así que la
+ * despedida se perdió y el prospecto, que había contestado educadamente, se
+ * quedó sin respuesta. El orden importa y hay que decirlo aquí, porque el
+ * agente no puede deducirlo del error: cuando lo ve, ya es tarde.
+ */
+const ANTES_DE_CONTESTAR = [
+  "No todo lo que entra lo ha escrito una persona.",
+  "",
+  "Si el mensaje es una AUTORESPUESTA —«estoy de vacaciones», «fuera de la",
+  "oficina», «te contestamos en breve», «visita este enlace»—, no contestes.",
+  "Nadie lo va a leer, gasta un envío del cupo del día y deja huella de bot.",
+  "Deja el lead como está y espera a que conteste la persona.",
+  "",
+  "Y si vas a despedirte, ESCRIBE PRIMERO y cierra después. En cuanto marcas",
+  "el lead como descartado o no interesado, el sistema bloquea cualquier envío",
+  "a esa persona: si cierras antes, tu despedida no sale y quien te contestó de",
+  "buenas maneras se queda sin respuesta.",
+].join("\n");
 
 export function construirSystemPrompt(
   playbook: PlaybookParaPrompt,
@@ -69,73 +97,95 @@ export function construirSystemPrompt(
   // Los marcadores del playbook se resuelven aquí para que quien escribe el
   // playbook pueda hablar de "{{empresa}}" sin saber de dónde sale el valor.
   const base = playbook.systemPrompt
-    .replaceAll('{{empresa}}', contexto.vendedora?.name ?? contexto.empresa)
-    .replaceAll('{{canal}}', NOMBRE_CANAL[contexto.canal])
+    .replaceAll("{{empresa}}", contexto.vendedora?.name ?? contexto.empresa)
+    .replaceAll("{{canal}}", NOMBRE_CANAL[contexto.canal]);
 
   const criterios = playbook.qualificationCriteria
     .map(
       (c) =>
         `- [${c.id}] (peso ${c.weight}) ${c.question}` +
-        (c.inferable_from ? `\n  Cómo inferirlo sin preguntar: ${c.inferable_from}` : ''),
+        (c.inferable_from
+          ? `\n  Cómo inferirlo sin preguntar: ${c.inferable_from}`
+          : ""),
     )
-    .join('\n')
+    .join("\n");
 
   const objeciones = playbook.objections
     .map((o) => `## "${o.objection}"\n${o.response}`)
-    .join('\n\n')
+    .join("\n\n");
 
-  const r = playbook.bookingRules
-  const dias = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo']
+  const r = playbook.bookingRules;
+  const dias = [
+    "lunes",
+    "martes",
+    "miércoles",
+    "jueves",
+    "viernes",
+    "sábado",
+    "domingo",
+  ];
   const reglasAgenda = [
     `- Duración de la reunión: ${r.duration_min} minutos.`,
     `- No propongas nada que empiece antes de ${r.min_notice_hours} h desde ahora.`,
     `- Deja ${r.buffer_min} min de colchón antes y después de cada reunión.`,
-    `- Horario: ${r.working_hours.from}–${r.working_hours.to} (${r.timezone}), ${r.working_hours.days.map((d) => dias[d - 1]).join(', ')}.`,
+    `- Horario: ${r.working_hours.from}–${r.working_hours.to} (${r.timezone}), ${r.working_hours.days.map((d) => dias[d - 1]).join(", ")}.`,
     `- Ofrece como mucho ${r.max_slots_offered} huecos por mensaje. Más satura y retrasa la decisión.`,
     `- No puedes agendar con un score por debajo de ${r.min_score_to_book}. Es un umbral duro, no una guía.`,
-  ].join('\n')
+  ].join("\n");
 
   const icpTexto = icp
     ? [
-        icp.description ?? '',
-        '',
-        'Señales de que ENCAJA:',
-        ...icp.criteria.map((c) => `- ${c.signal}${c.source ? ` (se ve en: ${c.source})` : ''}`),
-        '',
-        'Señales de que hay que DESCARTAR sin conversación:',
-        ...icp.disqualifiers.map((d) => `- ${d.signal}${d.source ? ` (se ve en: ${d.source})` : ''}`),
-      ].join('\n')
-    : ''
+        icp.description ?? "",
+        "",
+        "Señales de que ENCAJA:",
+        ...icp.criteria.map(
+          (c) => `- ${c.signal}${c.source ? ` (se ve en: ${c.source})` : ""}`,
+        ),
+        "",
+        "Señales de que hay que DESCARTAR sin conversación:",
+        ...icp.disqualifiers.map(
+          (d) => `- ${d.signal}${d.source ? ` (se ve en: ${d.source})` : ""}`,
+        ),
+      ].join("\n")
+    : "";
 
-  const v = contexto.vendedora
+  const v = contexto.vendedora;
 
   const quienesSomos = v
     ? [
-        v.website ? `Web: ${v.website}` : '',
-        v.context ?? '',
+        v.website ? `Web: ${v.website}` : "",
+        v.context ?? "",
         // Lo scrapeado va después de lo escrito a mano y marcado como tal: si se
         // contradicen, manda lo que puso la persona.
-        v.scrapedContext ? `\nDe su web:\n${sinCifrasDeDinero(v.scrapedContext)}` : '',
+        v.scrapedContext
+          ? `\nDe su web:\n${sinCifrasDeDinero(v.scrapedContext)}`
+          : "",
       ]
         .filter(Boolean)
-        .join('\n')
-    : ''
+        .join("\n")
+    : "";
 
   const leccionesTexto = contexto.lecciones
     ? [
         `Sacado de ${contexto.lecciones.basadoEn} mensajes ya enviados y de lo que contestaron.`,
-        '',
+        "",
         ...(contexto.lecciones.funciona.length
-          ? ['LO QUE ESTÁ FUNCIONANDO:', ...contexto.lecciones.funciona.map((l) => `- ${l}`)]
+          ? [
+              "LO QUE ESTÁ FUNCIONANDO:",
+              ...contexto.lecciones.funciona.map((l) => `- ${l}`),
+            ]
           : []),
-        '',
+        "",
         ...(contexto.lecciones.noFunciona.length
-          ? ['LO QUE NO:', ...contexto.lecciones.noFunciona.map((l) => `- ${l}`)]
+          ? [
+              "LO QUE NO:",
+              ...contexto.lecciones.noFunciona.map((l) => `- ${l}`),
+            ]
           : []),
-      ].join('\n')
-    : ''
+      ].join("\n")
+    : "";
 
-  const sobreEste = contexto.enriquecimiento?.resumen ?? ''
+  const sobreEste = contexto.enriquecimiento?.resumen ?? "";
 
   /**
    * El primer mensaje de LinkedIn no es un mensaje: es la nota de una
@@ -147,42 +197,43 @@ export function construirSystemPrompt(
    * frase cortada a la mitad es la peor primera impresión posible.
    */
   const limiteDelCanal =
-    contexto.canal === 'linkedin'
+    contexto.canal === "linkedin"
       ? [
-          'Tu primer mensaje va como NOTA DE UNA INVITACIÓN de contacto, y LinkedIn no',
-          'admite más de 200 caracteres. No son 200 palabras: son 200 letras, unas dos',
-          'frases. Si te pasas, se corta. Escribe una sola idea concreta y una pregunta',
-          'corta; ya habrá sitio para el resto cuando acepte.',
-        ].join('\n')
-      : ''
+          "Tu primer mensaje va como NOTA DE UNA INVITACIÓN de contacto, y LinkedIn no",
+          "admite más de 200 caracteres. No son 200 palabras: son 200 letras, unas dos",
+          "frases. Si te pasas, se corta. Escribe una sola idea concreta y una pregunta",
+          "corta; ya habrá sitio para el resto cuando acepte.",
+        ].join("\n")
+      : "";
 
   return [
     base.trim(),
-    seccion('El tamaño que admite este canal', limiteDelCanal),
-    seccion('Quiénes somos', quienesSomos),
-    seccion('Qué vendemos', sinCifrasDeDinero(v?.offer || playbook.offer)),
-    seccion(`A quién buscamos: ${icp?.name ?? 'sin ICP definido'}`, icpTexto),
+    seccion("El tamaño que admite este canal", limiteDelCanal),
+    seccion("Antes de contestar, mira QUÉ has recibido", ANTES_DE_CONTESTAR),
+    seccion("Quiénes somos", quienesSomos),
+    seccion("Qué vendemos", sinCifrasDeDinero(v?.offer || playbook.offer)),
+    seccion(`A quién buscamos: ${icp?.name ?? "sin ICP definido"}`, icpTexto),
     seccion(
-      'Qué tienes que averiguar (máximo 2 preguntas en toda la conversación)',
+      "Qué tienes que averiguar (máximo 2 preguntas en toda la conversación)",
       criterios
         ? `${criterios}\n\nEl resto lo infieres del perfil y de lo que te cuente. Registra el resultado con \`registrar_cualificacion\`.`
-        : '',
+        : "",
     ),
-    seccion('Objeciones y cómo responderlas', objeciones),
-    seccion('Reglas de agendado', reglasAgenda),
+    seccion("Objeciones y cómo responderlas", objeciones),
+    seccion("Reglas de agendado", reglasAgenda),
     seccion(
-      'Lo que hemos aprendido de nuestros propios resultados',
+      "Lo que hemos aprendido de nuestros propios resultados",
       leccionesTexto
         ? `${leccionesTexto}\n\nEsto pesa más que cualquier corazonada: sale de mensajes reales.`
-        : '',
+        : "",
     ),
     seccion(
-      'Sobre ESTA persona en concreto',
+      "Sobre ESTA persona en concreto",
       sobreEste
         ? `${sobreEste}\n\nUsa un detalle concreto de aquí en el mensaje. No lo recites entero ni lo enumeres: uno solo, bien traído, y sigue. Y si algo no está aquí, no te lo inventes.`
-        : '',
+        : "",
     ),
   ]
     .filter(Boolean)
-    .join('')
+    .join("");
 }

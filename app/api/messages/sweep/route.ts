@@ -83,9 +83,18 @@ export async function POST() {
   }
 
   try {
+    /**
+     * Lo que no se pudo mirar.
+     *
+     * Un buzón que responde 400 y un buzón sin respuestas nuevas se ven
+     * exactamente igual desde fuera: cero. Sin esta lista, la primera vez que
+     * Unipile cambiara un parámetro el barrido seguiría diciendo que todo está
+     * en orden mientras deja de leer el correo entero.
+     */
+    const errores: { donde: string; error: string }[] = [];
     const candidatos = [
-      ...(await deLasConversaciones()),
-      ...(await delCorreo()),
+      ...(await deLasConversaciones(errores)),
+      ...(await delCorreo(errores)),
     ];
 
     const nuevos = await soloLosNoRegistrados(candidatos);
@@ -115,6 +124,7 @@ export async function POST() {
       sinContestar: nuevos.length,
       reinyectados,
       fallidos,
+      errores,
       pendientes: Math.max(0, nuevos.length - aReinyectar.length),
     });
   } catch (err) {
@@ -129,7 +139,9 @@ export async function POST() {
  * que interesa son las respuestas de gente a la que escribimos nosotros, y así
  * el coste es proporcional a las campañas abiertas y no al buzón entero.
  */
-async function deLasConversaciones(): Promise<Entrante[]> {
+async function deLasConversaciones(
+  errores: { donde: string; error: string }[],
+): Promise<Entrante[]> {
   const hilos = await db
     .selectDistinct({
       chatId: touches.unipileChatId,
@@ -173,10 +185,13 @@ async function deLasConversaciones(): Promise<Entrante[]> {
           cuando: m.timestamp ?? null,
         });
       }
-    } catch {
+    } catch (err) {
       // Un hilo que Unipile ya no sirve (chat borrado, cuenta reconectada) no
-      // puede dejar sin revisar a los demás.
-      continue;
+      // puede dejar sin revisar a los demás, pero sí tiene que constar.
+      errores.push({
+        donde: `hilo ${hilo.chatId}`,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
   return encontrados;
@@ -190,7 +205,9 @@ async function deLasConversaciones(): Promise<Entrante[]> {
  * cruza con las direcciones a las que hemos escrito. Sin ese cruce se
  * reinyectaría también cada boletín y cada aviso automático que entra.
  */
-async function delCorreo(): Promise<Entrante[]> {
+async function delCorreo(
+  errores: { donde: string; error: string }[],
+): Promise<Entrante[]> {
   const buzones = await db
     .select({
       unipileAccountId: accounts.unipileAccountId,
@@ -209,7 +226,11 @@ async function delCorreo(): Promise<Entrante[]> {
         accountId: buzon.unipileAccountId,
         desde,
       }));
-    } catch {
+    } catch (err) {
+      errores.push({
+        donde: `buzón ${buzon.unipileAccountId}`,
+        error: err instanceof Error ? err.message : String(err),
+      });
       continue;
     }
 
