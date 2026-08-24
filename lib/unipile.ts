@@ -23,6 +23,16 @@ export type UnipileProvider = 'LINKEDIN' | 'INSTAGRAM' | 'GOOGLE' | 'MICROSOFT' 
  */
 export const MAX_CARACTERES_INVITACION = 200
 
+/**
+ * Un fallo NUESTRO, detectado antes de tocar la red.
+ *
+ * Se distingue de `UnipileError` porque cambia lo que hay que hacer: si la
+ * petición nunca salió, el mensaje no pudo llegar al prospecto, así que no hay
+ * riesgo de duplicarlo y el lead no debe quemarse. Con un error de Unipile no
+ * se sabe si salió, y por eso ahí no se reintenta nunca.
+ */
+export class ErrorAntesDeEnviar extends Error {}
+
 export class UnipileError extends Error {
   constructor(
     message: string,
@@ -128,10 +138,8 @@ export async function invitar(opciones: {
   email?: string
 }): Promise<InvitacionEnviada> {
   if (opciones.mensaje && opciones.mensaje.length > MAX_CARACTERES_INVITACION) {
-    throw new UnipileError(
+    throw new ErrorAntesDeEnviar(
       `La nota de invitación tiene ${opciones.mensaje.length} caracteres y el máximo es ${MAX_CARACTERES_INVITACION}. Acorta el primer toque en el playbook.`,
-      400,
-      '',
     )
   }
   return pedir<InvitacionEnviada>('/users/invite', {
@@ -370,8 +378,11 @@ export function notaDeInvitacion(texto: string): string {
   const finDeFrase = Math.max(trozo.lastIndexOf('. '), trozo.lastIndexOf('? '), trozo.lastIndexOf('! '))
   if (finDeFrase > MAX_CARACTERES_INVITACION * 0.5) return trozo.slice(0, finDeFrase + 1)
 
+  // Los puntos suspensivos cuentan: si se recorta a MAX y se añaden, el
+  // resultado tiene MAX+1 y lo rechaza la validación de dos líneas más abajo.
   const finDePalabra = trozo.lastIndexOf(' ')
-  return `${trozo.slice(0, finDePalabra > 0 ? finDePalabra : MAX_CARACTERES_INVITACION).trimEnd()}…`
+  const corte = finDePalabra > 0 ? finDePalabra : MAX_CARACTERES_INVITACION - 1
+  return `${trozo.slice(0, corte).trimEnd()}…`
 }
 
 /** De una URL de perfil de LinkedIn saca el identificador público. */

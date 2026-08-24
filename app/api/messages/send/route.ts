@@ -12,6 +12,7 @@ import {
 } from "@/lib/db/schema";
 import { fechaIso, jsonError, parseBody, serverError } from "@/lib/api";
 import {
+  ErrorAntesDeEnviar,
   UnipileError,
   enviarCorreo,
   enviarEnChat,
