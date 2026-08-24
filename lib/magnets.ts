@@ -1413,13 +1413,24 @@ export async function ejecutarCiclo(
         }
 
         const identidad = await asegurarLead(iman, contacto, cuenta);
+        /**
+         * Solo para el PRIMER mensaje.
+         *
+         * Sirve para no empezar una segunda secuencia con alguien al que esta
+         * cuenta ya escribió hoy —otro imán sobre otro post, o la campaña en
+         * frío—, porque en Instagram el hilo es único y serían dos secuencias
+         * en el mismo chat.
+         *
+         * Aplicarlo a los pasos siguientes era otra cosa muy distinta: frenaba
+         * la propia conversación. Alguien que acababa de seguir para recibir el
+         * recurso se quedaba sin él por haber recibido justo antes la petición
+         * de follow, es decir, por haber hecho exactamente lo que se le pidió.
+         */
         if (
+          contacto.state === "detectado" &&
           identidad &&
           (await yaEscritoHoy(cuenta.id, identidad.providerId))
         ) {
-          // Esta persona ya ha recibido algo por esta cuenta hoy: otro imán sobre
-          // otro post, o la campaña en frío de la misma cuenta. En Instagram el
-          // hilo es único, así que sería el mismo chat recibiendo dos secuencias.
           continue;
         }
         if (!identidad) {
