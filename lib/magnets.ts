@@ -261,6 +261,23 @@ export const SEGUIDORES_POR_REFRESCO = 500;
 export const SEGUIDORES_FRESCOS_SI_CONTESTAN_MIN = 10;
 
 /**
+ * Mientras alguien acaba de recibir el "dale a seguir", se mira casi en
+ * continuo — pero solo a los recién llegados y solo un rato.
+ *
+ * Quien va a seguir lo hace en los minutos siguientes, y la mayoría no avisa:
+ * le da a seguir y se queda esperando. Sin esto, ese silencio costaba hasta
+ * seis horas de espera por un recurso prometido "ahora mismo".
+ *
+ * Sale barato porque se piden solo los cincuenta seguidores más recientes, que
+ * es exactamente donde estaría: la lista viene ordenada por los últimos. A
+ * 0,00175 $ el perfil son unos céntimos por comprobación, y solo se paga
+ * durante la media hora siguiente a pedirlo.
+ */
+export const MINUTOS_DE_ESPERA_CALIENTE = 30;
+export const SEGUIDORES_FRESCOS_CALIENTE_MIN = 3;
+export const SEGUIDORES_EN_ESPERA_CALIENTE = 50;
+
+/**
  * Cuántas veces se pide el follow, contando la primera.
  *
  * Dos: la petición y un recordatorio. A la tercera ya no es un recordatorio,
@@ -324,7 +341,10 @@ async function usuarioDeCuenta(
  * "following" de cada persona multiplicaría el coste y el riesgo de bloqueo por
  * cada comentario, y el imán existe precisamente para tener muchos.
  */
-export async function refrescarSeguidores(accountId: string): Promise<number> {
+export async function refrescarSeguidores(
+  accountId: string,
+  limite: number = SEGUIDORES_POR_REFRESCO,
+): Promise<number> {
   const { usuario } = await usuarioDeCuenta(accountId);
 
   const items = await runSync<SeguidorApify>(
@@ -332,9 +352,9 @@ export async function refrescarSeguidores(accountId: string): Promise<number> {
     {
       usernames: [usuario],
       dataToScrape: "followers",
-      resultsLimit: SEGUIDORES_POR_REFRESCO,
+      resultsLimit: limite,
     },
-    { maxItems: SEGUIDORES_POR_REFRESCO, timeoutSecs: 240 },
+    { maxItems: limite, timeoutSecs: 240 },
   );
 
   const filas = items
@@ -368,10 +388,11 @@ export async function refrescarSeguidores(accountId: string): Promise<number> {
 export async function refrescarSiHaceFalta(
   accountId: string,
   frescuraMin: number = SEGUIDORES_FRESCOS_MIN,
+  limite: number = SEGUIDORES_POR_REFRESCO,
 ): Promise<number> {
   const visto = await seguidoresVistosEn(accountId);
   if (visto && Date.now() - visto.getTime() <= frescuraMin * 60_000) return -1;
-  return refrescarSeguidores(accountId);
+  return refrescarSeguidores(accountId, limite);
 }
 
 export async function seguidoresVistosEn(
@@ -840,6 +861,36 @@ export async function moverA(
  * cosas: pagar un refresco de seguidores que merece la pena, y saber a quién
  * hay que contestarle si resulta que todavía no aparece en la lista.
  */
+/** Cuándo salió de verdad nuestro último mensaje a ese lead. */
+export async function ultimoMensajeNuestro(
+  leadId: string,
+): Promise<Date | null> {
+  const [fila] = await db
+    .select({ cuando: touches.createdAt })
+    .from(touches)
+    .where(
+      and(
+        eq(touches.leadId, leadId),
+        eq(touches.direction, "out"),
+        // Solo lo que SALIÓ. Un intento fallido no es haber hablado.
+        eq(touches.status, "enviado"),
+      ),
+    )
+    .orderBy(desc(touches.createdAt))
+    .limit(1);
+  return fila?.cuando ?? null;
+}
+
+/** Si a ese contacto se le escribió hace poco y todavía está esperando. */
+export async function esperaReciente(
+  contacto: Contacto,
+  minutos: number,
+): Promise<boolean> {
+  if (!contacto.leadId) return false;
+  const cuando = await ultimoMensajeNuestro(contacto.leadId);
+  return Boolean(cuando && Date.now() - cuando.getTime() < minutos * 60_000);
+}
+
 export async function contestoDespuesDePedirle(
   contacto: Contacto,
 ): Promise<boolean> {
@@ -857,21 +908,7 @@ export async function contestoDespuesDePedirle(
    * De paso evita repetir el recordatorio: en cuanto sale, el último mensaje
    * vuelve a ser nuestro y no se dispara otra vez hasta que conteste.
    */
-  const [nuestro] = await db
-    .select({ cuando: touches.createdAt })
-    .from(touches)
-    .where(
-      and(
-        eq(touches.leadId, contacto.leadId),
-        eq(touches.direction, "out"),
-        // Solo lo que SALIÓ. Un intento fallido no es haber hablado, y
-        // contarlo dejaba la respuesta de la otra persona por detrás de un
-        // mensaje que nunca vio.
-        eq(touches.status, "enviado"),
-      ),
-    )
-    .orderBy(desc(touches.createdAt))
-    .limit(1);
+  const nuestro = await ultimoMensajeNuestro(contacto.leadId);
   if (!nuestro) return false;
 
   const [suyo] = await db
@@ -881,7 +918,7 @@ export async function contestoDespuesDePedirle(
       and(
         eq(touches.leadId, contacto.leadId),
         eq(touches.direction, "in"),
-        gt(touches.createdAt, nuestro.cuando),
+        gt(touches.createdAt, nuestro),
       ),
     )
     .limit(1);
@@ -1087,19 +1124,39 @@ export async function ejecutarCiclo(
           ),
         );
       let alguienContesto = false;
+      let alguienAcabaDePedirlo = false;
       for (const c of enEspera) {
-        if (await contestoDespuesDePedirle(c)) {
+        if (!alguienContesto && (await contestoDespuesDePedirle(c))) {
           alguienContesto = true;
-          break;
         }
+        if (
+          !alguienAcabaDePedirlo &&
+          (await esperaReciente(c, MINUTOS_DE_ESPERA_CALIENTE))
+        ) {
+          alguienAcabaDePedirlo = true;
+        }
+        if (alguienContesto && alguienAcabaDePedirlo) break;
       }
 
-      const cacheados = await refrescarSiHaceFalta(
-        cuenta.id,
-        alguienContesto
-          ? SEGUIDORES_FRESCOS_SI_CONTESTAN_MIN
-          : SEGUIDORES_FRESCOS_MIN,
-      );
+      /**
+       * Tres ritmos, de más urgente a más barato: quien acaba de contestar,
+       * quien acaba de recibir la petición y sigue callado, y el resto. Los
+       * dos primeros piden solo los seguidores más recientes, que es donde
+       * estaría alguien que acaba de darle a seguir.
+       */
+      const cacheados = alguienContesto
+        ? await refrescarSiHaceFalta(
+            cuenta.id,
+            SEGUIDORES_FRESCOS_SI_CONTESTAN_MIN,
+            SEGUIDORES_EN_ESPERA_CALIENTE,
+          )
+        : alguienAcabaDePedirlo
+          ? await refrescarSiHaceFalta(
+              cuenta.id,
+              SEGUIDORES_FRESCOS_CALIENTE_MIN,
+              SEGUIDORES_EN_ESPERA_CALIENTE,
+            )
+          : await refrescarSiHaceFalta(cuenta.id);
       if (cacheados === 0) {
         await db.insert(runLogs).values({
           workflow: "iman",
