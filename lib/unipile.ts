@@ -151,6 +151,36 @@ export type MensajeUnipile = {
   sender_id?: string
 }
 
+/**
+ * Manda un correo desde la cuenta del usuario.
+ *
+ * El correo NO va por `/chats`: esa es la API de mensajería de LinkedIn e
+ * Instagram, y una cuenta de Gmail conectada responde a ella con
+ * "Provided account is not designed for this feature". Unipile tiene un
+ * endpoint aparte que enruta a Gmail, Microsoft Graph o SMTP según el
+ * proveedor, y el correo aparece en la carpeta de enviados del usuario.
+ *
+ * Se descubrió con cuatro envíos fallidos en producción: se registraban como
+ * intentos y quemaban el lead sin que saliera nada.
+ */
+export async function enviarCorreo(opciones: {
+  accountId: string
+  destinatario: string
+  asunto: string
+  cuerpo: string
+}): Promise<MensajeEnviado> {
+  return pedir<MensajeEnviado>('/emails', {
+    method: 'POST',
+    json: true,
+    body: JSON.stringify({
+      account_id: opciones.accountId,
+      to: [{ identifier: opciones.destinatario }],
+      subject: opciones.asunto,
+      body: opciones.cuerpo,
+    }),
+  })
+}
+
 export async function listarMensajes(
   chatId: string,
   limite = 50,
@@ -308,6 +338,18 @@ export type UsuarioUnipile = {
   id?: string
   public_identifier?: string
   name?: string
+  /**
+   * Grado de conexión en LinkedIn: "DISTANCE_1" es contacto directo.
+   * A quien no lo es no se le puede mandar un DM, solo una invitación.
+   */
+  network_distance?: string
+}
+
+/** De una URL de perfil de LinkedIn saca el identificador público. */
+export function identificadorDeUrlLinkedin(url: string | null): string | null {
+  if (!url) return null
+  const m = url.match(/linkedin\.com\/in\/([^/?#]+)/i)
+  return m?.[1] ? decodeURIComponent(m[1]) : null
 }
 
 /**

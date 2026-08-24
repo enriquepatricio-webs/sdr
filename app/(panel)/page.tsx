@@ -1,7 +1,14 @@
 import Link from "next/link";
 import { and, count, eq, gte, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { campaigns, leads, meetings, runLogs, touches } from "@/lib/db/schema";
+import {
+  accounts,
+  campaigns,
+  leads,
+  meetings,
+  runLogs,
+  touches,
+} from "@/lib/db/schema";
 import { ajustesEfectivos, workspaceActivo } from "@/lib/workspace";
 import { MINIMO_PARA_APRENDER, obtenerMuestras } from "@/lib/insights";
 import { ParadaDeEmergencia } from "./parada";
@@ -87,6 +94,7 @@ export default async function Panel() {
     ajustes,
     coste,
     muestras,
+    porCampana,
   ] = await Promise.all([
     db
       .select({ status: leads.status, n: count() })
@@ -138,6 +146,42 @@ export default async function Panel() {
       .from(runLogs)
       .where(gte(runLogs.createdAt, hace30dias)),
     obtenerMuestras(200, empresa?.id).catch(() => []),
+    /**
+     * Qué ha hecho cada campaña. El panel decía "4 contactados" sin decir de
+     * quién, y sobre todo sin decir que había 109 envíos FALLIDOS: como un
+     * fallo no se reintenta nunca, esos leads estaban quemados y no se veía en
+     * ninguna pantalla.
+     */
+    db
+      .select({
+        campana: campaigns.name,
+        canal: campaigns.channel,
+        estado: campaigns.status,
+        cuenta: accounts.displayName,
+        enviados: sql<number>`count(*) filter (where ${touches.status} = 'enviado')::int`,
+        borradores: sql<number>`count(*) filter (where ${touches.status} = 'borrador')::int`,
+        fallidos: sql<number>`count(*) filter (where ${touches.status} = 'fallido')::int`,
+      })
+      .from(campaigns)
+      .leftJoin(accounts, eq(accounts.id, campaigns.accountId))
+      .leftJoin(leads, eq(leads.campaignId, campaigns.id))
+      .leftJoin(
+        touches,
+        and(
+          eq(touches.leadId, leads.id),
+          eq(touches.direction, "out"),
+          gte(touches.createdAt, hace30dias),
+        ),
+      )
+      .where(deLaEmpresa)
+      .groupBy(
+        campaigns.id,
+        campaigns.name,
+        campaigns.channel,
+        campaigns.status,
+        accounts.displayName,
+      )
+      .orderBy(campaigns.name),
   ]);
 
   const conteo = new Map(porEstado.map((r) => [r.status, Number(r.n)]));
@@ -211,6 +255,67 @@ export default async function Panel() {
       />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        {/* Quién ha hecho qué. Sin esto, "4 contactados" no dice de qué cuenta
+          sale, y sobre todo no dice que hubo envíos que fallaron. */}
+        <section className="border border-linea bg-lienzo p-4">
+          <div className="flex items-baseline justify-between">
+            <p className="etiqueta">Por campaña · últimos 30 días</p>
+            {porCampana.some((c) => Number(c.fallidos) > 0) && (
+              <p className="text-xs text-vivo">
+                Un envío fallido no se reintenta: ese lead se ha perdido.
+              </p>
+            )}
+          </div>
+          <table className="mt-3 w-full text-sm">
+            <thead>
+              <tr className="border-b border-linea text-left">
+                <th className="pb-1 font-normal text-tenue">Campaña</th>
+                <th className="pb-1 font-normal text-tenue">Cuenta</th>
+                <th className="pb-1 text-right font-normal text-tenue">
+                  Enviados
+                </th>
+                <th className="pb-1 text-right font-normal text-tenue">
+                  Borradores
+                </th>
+                <th className="pb-1 text-right font-normal text-tenue">
+                  Fallidos
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {porCampana.map((c) => (
+                <tr
+                  key={c.campana}
+                  className="border-b border-linea last:border-0"
+                >
+                  <td className="py-1.5">
+                    {c.campana}
+                    {c.estado !== "running" && (
+                      <span className="ml-2 text-xs text-aviso">
+                        {c.estado}
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-1.5 text-tenue">
+                    {c.cuenta ?? "sin cuenta"}
+                  </td>
+                  <td className="py-1.5 text-right font-mono">
+                    {Number(c.enviados)}
+                  </td>
+                  <td className="py-1.5 text-right font-mono text-ensayo">
+                    {Number(c.borradores) || ""}
+                  </td>
+                  <td
+                    className={`py-1.5 text-right font-mono ${Number(c.fallidos) ? "font-bold text-vivo" : "text-tenue"}`}
+                  >
+                    {Number(c.fallidos) || ""}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+
         <section className="border border-linea bg-lienzo p-4">
           <h2 className="etiqueta">Embudo</h2>
           <ul className="mt-3 space-y-2">

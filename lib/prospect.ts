@@ -545,7 +545,11 @@ export function normalizarCandidato(
       linkedinUrl: url,
       instagramUsername: null,
       email: correo,
-      providerId: texto(raw.id, raw.companyDomain),
+      // El id de esta base NO es un provider_id de Unipile. Ponerlo aquí hacía
+      // que el envío intentara escribir a un destinatario inexistente y Unipile
+      // respondiera 422 "invalid_recipient": ochenta y cuatro leads quemados en
+      // una mañana. Se deja vacío y se resuelve al enviar, desde la URL.
+      providerId: null,
       raw: item,
     };
   }
