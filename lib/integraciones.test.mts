@@ -9,7 +9,13 @@
 import assert from 'node:assert/strict'
 import type { BookingRules } from './db/schema'
 import { calcularHuecos, consultarDisponibilidad, describirHueco } from './composio'
-import { MAX_CARACTERES_INVITACION, interpretarWebhook, invitar, iniciarChat } from './unipile'
+import {
+  MAX_CARACTERES_INVITACION,
+  notaDeInvitacion,
+  interpretarWebhook,
+  invitar,
+  iniciarChat,
+} from './unipile'
 
 let ok = 0
 const fallos: string[] = []
@@ -92,8 +98,14 @@ await prueba('la invitación va como JSON', async () => {
 await prueba('una nota de invitación demasiado larga falla en vez de recortarse', async () => {
   simular({ invitation_id: 'i1' })
   await assert.rejects(
-    () => invitar({ accountId: 'a1', providerId: 'ACo1', mensaje: 'x'.repeat(MAX_CARACTERES_INVITACION + 1) }),
-    /300/,
+    () =>
+      invitar({
+        accountId: 'a1',
+        providerId: 'ACo1',
+        mensaje: 'x'.repeat(MAX_CARACTERES_INVITACION + 1),
+      }),
+    // El mensaje de error tiene que decir el tope real, sea cual sea.
+    new RegExp(String(MAX_CARACTERES_INVITACION)),
   )
 })
 
@@ -283,6 +295,36 @@ await prueba('el hueco se describe en la zona del prospecto y en español', () =
 })
 
 globalThis.fetch = original
+
+/* ---- La nota de una invitación de LinkedIn -------------------------------- */
+/* Es lo PRIMERO que ve un desconocido. Pasarse de 200 hace que Unipile devuelva
+   400 y el lead se queme; cortar a mitad de frase da la impresión contraria a
+   la que busca el playbook. */
+
+await prueba('una nota corta se deja tal cual', () => {
+  const corta = 'Hola Ana, vi que abrís segundo local. ¿Te cuento algo en dos líneas?'
+  assert.equal(notaDeInvitacion(corta), corta)
+})
+
+await prueba('nunca supera el tope de LinkedIn', () => {
+  const larga = 'Frase de relleno bastante larga para pasarse del tope. '.repeat(20)
+  assert.ok(
+    notaDeInvitacion(larga).length <= MAX_CARACTERES_INVITACION + 1,
+    'la nota recortada seguía siendo más larga de lo que LinkedIn admite',
+  )
+})
+
+await prueba('corta en un punto, no a mitad de palabra', () => {
+  const texto =
+    'Hola, no nos conocemos. Vi que lleváis tres locales abiertos en Madrid y me llamó la atención cómo tenéis montada la carta. Trabajo con restaurantes en algo muy concreto y quería preguntarte una cosa rápida sobre vuestro equipo de sala.'
+  const nota = notaDeInvitacion(texto)
+  assert.ok(nota.length <= MAX_CARACTERES_INVITACION + 1)
+  assert.ok(
+    nota.endsWith('.') || nota.endsWith('…'),
+    `la nota acabó de forma abrupta: "${nota.slice(-30)}"`,
+  )
+  assert.ok(!nota.includes('  '), 'quedó un espacio doble al cortar')
+})
 
 console.log(`\n${ok} comprobaciones correctas`)
 if (fallos.length) {

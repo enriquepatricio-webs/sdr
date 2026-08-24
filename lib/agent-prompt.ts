@@ -137,8 +137,28 @@ export function construirSystemPrompt(
 
   const sobreEste = contexto.enriquecimiento?.resumen ?? ''
 
+  /**
+   * El primer mensaje de LinkedIn no es un mensaje: es la nota de una
+   * invitación de contacto, y LinkedIn la corta en 200 caracteres.
+   *
+   * En frío no se puede mandar un DM a quien no es contacto de primer grado, así
+   * que lo que sale es la invitación. Se le dice al agente para que escriba a
+   * esa medida; el recorte automático es la red de seguridad, no el plan: una
+   * frase cortada a la mitad es la peor primera impresión posible.
+   */
+  const limiteDelCanal =
+    contexto.canal === 'linkedin'
+      ? [
+          'Tu primer mensaje va como NOTA DE UNA INVITACIÓN de contacto, y LinkedIn no',
+          'admite más de 200 caracteres. No son 200 palabras: son 200 letras, unas dos',
+          'frases. Si te pasas, se corta. Escribe una sola idea concreta y una pregunta',
+          'corta; ya habrá sitio para el resto cuando acepte.',
+        ].join('\n')
+      : ''
+
   return [
     base.trim(),
+    seccion('El tamaño que admite este canal', limiteDelCanal),
     seccion('Quiénes somos', quienesSomos),
     seccion('Qué vendemos', sinCifrasDeDinero(v?.offer || playbook.offer)),
     seccion(`A quién buscamos: ${icp?.name ?? 'sin ICP definido'}`, icpTexto),

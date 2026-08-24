@@ -14,7 +14,14 @@
 export type UnipileProvider = 'LINKEDIN' | 'INSTAGRAM' | 'GOOGLE' | 'MICROSOFT' | 'IMAP'
 
 /** Máximo que admite Unipile en el texto que acompaña a una invitación. */
-export const MAX_CARACTERES_INVITACION = 300
+/**
+ * Tope real de la nota de una invitación de LinkedIn.
+ *
+ * Estaba en 300, que es lo que dice la documentación, pero con 250 caracteres
+ * Unipile devolvió 400 `too_many_characters` en producción: las cuentas sin
+ * Premium admiten menos. 200 pasa en todas.
+ */
+export const MAX_CARACTERES_INVITACION = 200
 
 export class UnipileError extends Error {
   constructor(
@@ -343,6 +350,28 @@ export type UsuarioUnipile = {
    * A quien no lo es no se le puede mandar un DM, solo una invitación.
    */
   network_distance?: string
+}
+
+
+
+/**
+ * Recorta la nota SIN cortar una frase por la mitad.
+ *
+ * Es lo primero que el prospecto ve de nosotros; una frase cortada a medias con
+ * puntos suspensivos da la impresión contraria a la que busca el playbook.
+ * Se corta en el último punto que quepa, y si no hay ninguno, en la última
+ * palabra entera.
+ */
+export function notaDeInvitacion(texto: string): string {
+  const limpio = texto.trim()
+  if (limpio.length <= MAX_CARACTERES_INVITACION) return limpio
+
+  const trozo = limpio.slice(0, MAX_CARACTERES_INVITACION)
+  const finDeFrase = Math.max(trozo.lastIndexOf('. '), trozo.lastIndexOf('? '), trozo.lastIndexOf('! '))
+  if (finDeFrase > MAX_CARACTERES_INVITACION * 0.5) return trozo.slice(0, finDeFrase + 1)
+
+  const finDePalabra = trozo.lastIndexOf(' ')
+  return `${trozo.slice(0, finDePalabra > 0 ? finDePalabra : MAX_CARACTERES_INVITACION).trimEnd()}…`
 }
 
 /** De una URL de perfil de LinkedIn saca el identificador público. */
