@@ -9,13 +9,14 @@
  * transiciones, petición de que le dejen en paz) para poder probarlo sin red ni
  * base de datos: son las tres cosas que, si fallan, le escriben a quien no toca.
  */
-import { and, count, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, gt, gte, inArray, sql } from "drizzle-orm";
 import { db } from "./db";
 import { MENCIONA_DINERO } from "./sin-precios";
 import { MINUTOS_QUE_RESERVA_UN_BORRADOR, calcularCupo } from "./quota";
 import { ajustesEfectivos } from "./workspace";
 import { fueraDeVentana } from "./sending-window";
 import {
+  TERMINAL_LEAD_STATUSES,
   accounts,
   campaigns,
   followers,
@@ -221,6 +222,37 @@ export const SEGUIDORES_FRESCOS_MIN = 360;
 export const SEGUIDORES_POR_REFRESCO = 500;
 
 /**
+ * Frescura exigida cuando alguien ha CONTESTADO al "dale a seguir".
+ *
+ * Seis horas es un ahorro sensato para preguntar por gente que no ha dicho
+ * nada. Pero quien acaba de escribir "Ya está" está delante de la pantalla
+ * esperando un recurso que le hemos prometido "ahora mismo", y una caché de
+ * hasta seis horas convierte esa promesa en mentira. Ese mensaje es la señal
+ * más barata que hay de que merece la pena pagar el scraping.
+ */
+export const SEGUIDORES_FRESCOS_SI_CONTESTAN_MIN = 10;
+
+/**
+ * Cuántas veces se pide el follow, contando la primera.
+ *
+ * Dos: la petición y un recordatorio. A la tercera ya no es un recordatorio,
+ * es insistir.
+ */
+export const MAX_PETICIONES_DE_FOLLOW = 2;
+
+/** Paso del recordatorio. Aparte de los tres del embudo para no pisarlos. */
+export const PASO_RECORDATORIO = 4;
+
+/**
+ * Lo que se responde a quien dice que ya sigue y no aparece en la lista.
+ *
+ * Callarse es lo que hacía antes, y desde el otro lado es indistinguible de un
+ * bot roto: la persona contesta, no pasa nada, y se va.
+ */
+export const RECORDATORIO_FOLLOW =
+  "Gracias, pero todavía no me sale que me sigas. Dale a seguir y te lo mando al momento; si ya le has dado, dame un minuto y vuelve a escribirme.";
+
+/**
  * Cada cuánto se vuelve a leer la publicación buscando comentarios nuevos.
  *
  * El cron pasa cada 15 minutos, pero releer el post entero cada vez es pagar
@@ -307,10 +339,12 @@ export async function refrescarSeguidores(accountId: string): Promise<number> {
  * Refresca la lista de seguidores como mucho una vez por ciclo, y solo si está
  * vieja. Devuelve cuántos hay cacheados.
  */
-export async function refrescarSiHaceFalta(accountId: string): Promise<number> {
+export async function refrescarSiHaceFalta(
+  accountId: string,
+  frescuraMin: number = SEGUIDORES_FRESCOS_MIN,
+): Promise<number> {
   const visto = await seguidoresVistosEn(accountId);
-  if (visto && Date.now() - visto.getTime() <= SEGUIDORES_FRESCOS_MIN * 60_000)
-    return -1;
+  if (visto && Date.now() - visto.getTime() <= frescuraMin * 60_000) return -1;
   return refrescarSeguidores(accountId);
 }
 
@@ -512,7 +546,7 @@ export async function toqueDelPaso(
 
 export type ResultadoEnvio = {
   enviado: boolean;
-  motivo?: "menciona_dinero" | "autopiloto_apagado" | "fallo";
+  motivo?: "menciona_dinero" | "autopiloto_apagado" | "fallo" | "lead_cerrado";
   chatId?: string | null;
 };
 
@@ -534,6 +568,32 @@ export async function enviarDm(opciones: {
   autopilot: boolean;
 }): Promise<ResultadoEnvio> {
   const { leadId, cuenta, texto, paso } = opciones;
+
+  /**
+   * Un lead cerrado no recibe nada, tampoco por aquí.
+   *
+   * El imán no pasa por `/api/messages/send`, así que la comprobación que hay
+   * allí —la que impide escribir a quien pidió la baja— no le cubría. Entre
+   * "entregado" y el pitch de reunión hay una ventana en la que el agente puede
+   * haber cerrado el lead como `no_interesado`, y el pitch salía igual.
+   */
+  const [lead] = await db
+    .select({ status: leads.status })
+    .from(leads)
+    .where(eq(leads.id, leadId));
+  if (
+    lead &&
+    (TERMINAL_LEAD_STATUSES as readonly string[]).includes(lead.status)
+  ) {
+    await db.insert(runLogs).values({
+      workflow: "iman",
+      leadId,
+      level: "info",
+      message: `El imán no escribe: el lead está en "${lead.status}".`,
+      payload: { paso },
+    });
+    return { enviado: false, motivo: "lead_cerrado" };
+  }
 
   if (MENCIONA_DINERO.test(texto)) {
     await db.insert(runLogs).values({
@@ -736,6 +796,31 @@ export async function moverA(
   return filas.length > 0;
 }
 
+/**
+ * Si ese contacto ha escrito DESPUÉS de que le pidiéramos el follow.
+ *
+ * Es la señal de "creo que ya he hecho lo que me pediste". Sirve para dos
+ * cosas: pagar un refresco de seguidores que merece la pena, y saber a quién
+ * hay que contestarle si resulta que todavía no aparece en la lista.
+ */
+export async function contestoDespuesDePedirle(
+  contacto: Contacto,
+): Promise<boolean> {
+  if (!contacto.leadId) return false;
+  const [fila] = await db
+    .select({ id: touches.id })
+    .from(touches)
+    .where(
+      and(
+        eq(touches.leadId, contacto.leadId),
+        eq(touches.direction, "in"),
+        gt(touches.createdAt, contacto.updatedAt),
+      ),
+    )
+    .limit(1);
+  return Boolean(fila);
+}
+
 /** Los contactos que todavía tienen algo pendiente, los más antiguos primero. */
 export async function contactosPendientes(
   magnetId: string,
@@ -908,7 +993,34 @@ export async function ejecutarCiclo(
     );
 
   if (Number(esperando) > 0) {
-    const cacheados = await refrescarSiHaceFalta(cuenta.id);
+    /**
+     * Si alguno de los que esperan ha contestado, la caché tiene que estar
+     * fresca de verdad: esa persona está delante de la pantalla esperando lo
+     * que le hemos prometido "ahora mismo".
+     */
+    const enEspera = await db
+      .select()
+      .from(magnetContacts)
+      .where(
+        and(
+          eq(magnetContacts.magnetId, iman.id),
+          eq(magnetContacts.state, "pidiendo_follow"),
+        ),
+      );
+    let alguienContesto = false;
+    for (const c of enEspera) {
+      if (await contestoDespuesDePedirle(c)) {
+        alguienContesto = true;
+        break;
+      }
+    }
+
+    const cacheados = await refrescarSiHaceFalta(
+      cuenta.id,
+      alguienContesto
+        ? SEGUIDORES_FRESCOS_SI_CONTESTAN_MIN
+        : SEGUIDORES_FRESCOS_MIN,
+    );
     if (cacheados === 0) {
       await db.insert(runLogs).values({
         workflow: "iman",
@@ -965,21 +1077,12 @@ export async function ejecutarCiclo(
   /* ---- 3. Avanzar a cada uno un paso ---------------------------------- */
   for (const contacto of await contactosPendientes(iman.id, LOTE)) {
     try {
-      // Pasar de `pidiendo_follow` a `verificado` no manda nada, así que se hace
-      // aunque no quede cupo: es lo que deja la cola lista para la hora siguiente.
-      if (contacto.state === "pidiendo_follow") {
-        if (await verificarSigue(cuenta.id, contacto.username)) {
-          if (await moverA(contacto, "verificado", { verifiedAt: new Date() }))
-            resumen.verificados++;
-        }
-        continue;
-      }
-
-      if (presupuesto <= 0) continue;
-      if (contacto.state === "entregado" && !iman.pitchMeeting) continue;
-
       // Si en algún momento pidió que le dejaran en paz, se para aquí y no
       // recibe nada más, ni una despedida.
+      //
+      // Va ANTES de la rama de `pidiendo_follow`: estaba después, y como esa
+      // rama termina siempre en `continue`, a quien decía "no me escribas"
+      // mientras esperaba el follow no se le hacía ni caso.
       if (
         contacto.unipileChatId &&
         (await pidioQueLeDejen(contacto.unipileChatId))
@@ -998,6 +1101,55 @@ export async function ejecutarCiclo(
         }
         continue;
       }
+
+      // Pasar de `pidiendo_follow` a `verificado` no manda nada, así que se hace
+      // aunque no quede cupo: es lo que deja la cola lista para la hora siguiente.
+      if (contacto.state === "pidiendo_follow") {
+        if (await verificarSigue(cuenta.id, contacto.username)) {
+          if (await moverA(contacto, "verificado", { verifiedAt: new Date() }))
+            resumen.verificados++;
+          continue;
+        }
+
+        /**
+         * No sigue. Si ha contestado, hay que decírselo.
+         *
+         * Antes esto era un `continue` a secas y quien escribía "Ya está" sin
+         * haber seguido se quedaba en silencio para siempre. Desde el otro lado
+         * eso es indistinguible de un bot roto.
+         */
+        if (
+          presupuesto > 0 &&
+          contacto.leadId &&
+          contacto.providerId &&
+          contacto.followAsks < MAX_PETICIONES_DE_FOLLOW &&
+          (await contestoDespuesDePedirle(contacto))
+        ) {
+          presupuesto--;
+          const aviso = await enviarDm({
+            leadId: contacto.leadId,
+            cuenta,
+            providerId: contacto.providerId,
+            chatId: contacto.unipileChatId,
+            texto: RECORDATORIO_FOLLOW,
+            paso: PASO_RECORDATORIO,
+            autopilot: ajustes.autopilot,
+          });
+          if (aviso.enviado) {
+            await db
+              .update(magnetContacts)
+              .set({ followAsks: contacto.followAsks + 1 })
+              .where(eq(magnetContacts.id, contacto.id));
+            resumen.peticionesDeFollow++;
+          } else if (aviso.motivo === "autopiloto_apagado") {
+            resumen.borradores++;
+          }
+        }
+        continue;
+      }
+
+      if (presupuesto <= 0) continue;
+      if (contacto.state === "entregado" && !iman.pitchMeeting) continue;
 
       const identidad = await asegurarLead(iman, contacto, cuenta);
       if (identidad && (await yaEscritoHoy(cuenta.id, identidad.providerId))) {

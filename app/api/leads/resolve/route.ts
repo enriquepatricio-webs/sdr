@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
-import { and, asc, desc, eq, ne, notInArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, notInArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   TERMINAL_LEAD_STATUSES,
   accounts,
   campaigns,
   leads,
+  magnetContacts,
   normalizedEmail,
   normalizedHandle,
   touches,
@@ -218,6 +219,38 @@ export async function GET(request: Request) {
       );
     }
 
+    /**
+     * Un imán a medias es dueño de su conversación, y el agente en frío no.
+     *
+     * Los contactos de un lead magnet tienen lead propio para poder usar la
+     * misma cañería de envío, pero mientras el imán está pidiendo el follow o
+     * preparando la entrega, la conversación NO es una prospección: es "dale a
+     * seguir y te lo mando".
+     *
+     * Sin esto pasa lo que pasó la primera vez que alguien contestó: el agente
+     * leyó "Ya está", lo midió contra el ICP de restaurantes, no encontró
+     * empresa ni cargo —claro, es una persona pidiendo un recurso— y cerró el
+     * lead como descartado. Y `descartado` es terminal, así que el imán ya no
+     * podía entregarle nunca el recurso que le acababa de prometer.
+     *
+     * A partir de `entregado` sí toma el relevo el agente: el recurso ya está
+     * en su mano y lo que viene después es una conversación de verdad.
+     */
+    const [imanEnCurso] = await db
+      .select({ estado: magnetContacts.state })
+      .from(magnetContacts)
+      .where(
+        and(
+          eq(magnetContacts.leadId, lead.id),
+          inArray(magnetContacts.state, [
+            "detectado",
+            "pidiendo_follow",
+            "verificado",
+          ]),
+        ),
+      )
+      .limit(1);
+
     const [campana] = await db
       .select()
       .from(campaigns)
@@ -239,8 +272,17 @@ export async function GET(request: Request) {
       lead,
       campana,
       chatId: chatId ?? null,
-      /** Congelado por un humano: el agente no debe responder. */
-      congelado: lead.status === "revision_humana",
+      /**
+       * El agente no debe responder. Dos motivos, y los dos significan lo
+       * mismo de puertas afuera: esta conversación la lleva otro.
+       */
+      congelado: lead.status === "revision_humana" || Boolean(imanEnCurso),
+      /** Quién la lleva, para poder leerlo en la ejecución de n8n. */
+      motivoCongelado: imanEnCurso
+        ? `la lleva un lead magnet, en estado "${imanEnCurso.estado}"`
+        : lead.status === "revision_humana"
+          ? "la congeló una persona"
+          : null,
       hilo: hilo.map((t) => ({
         quien: t.direction === "out" ? "nosotros" : "prospecto",
         texto: t.body,
