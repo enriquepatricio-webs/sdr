@@ -158,20 +158,20 @@ export default async function Panel() {
         canal: campaigns.channel,
         estado: campaigns.status,
         cuenta: accounts.displayName,
-        enviados: sql<number>`count(*) filter (where ${touches.status} = 'enviado')::int`,
-        borradores: sql<number>`count(*) filter (where ${touches.status} = 'borrador')::int`,
-        fallidos: sql<number>`count(*) filter (where ${touches.status} = 'fallido')::int`,
+        enviados: sql<number>`count(*) filter (where ${touches.direction} = 'out' and ${touches.status} = 'enviado')::int`,
+        borradores: sql<number>`count(*) filter (where ${touches.direction} = 'out' and ${touches.status} = 'borrador')::int`,
+        fallidos: sql<number>`count(*) filter (where ${touches.direction} = 'out' and ${touches.status} = 'fallido')::int`,
+        // Lo entrante se cuenta aquí y no en una consulta aparte porque es la
+        // única columna que dice si una campaña está funcionando: enviar mucho
+        // y que no conteste nadie no es actividad, es ruido.
+        respuestas: sql<number>`count(*) filter (where ${touches.direction} = 'in')::int`,
       })
       .from(campaigns)
       .leftJoin(accounts, eq(accounts.id, campaigns.accountId))
       .leftJoin(leads, eq(leads.campaignId, campaigns.id))
       .leftJoin(
         touches,
-        and(
-          eq(touches.leadId, leads.id),
-          eq(touches.direction, "out"),
-          gte(touches.createdAt, hace30dias),
-        ),
+        and(eq(touches.leadId, leads.id), gte(touches.createdAt, hace30dias)),
       )
       .where(deLaEmpresa)
       .groupBy(
@@ -280,6 +280,9 @@ export default async function Panel() {
                 <th className="pb-1 text-right font-normal text-tenue">
                   Fallidos
                 </th>
+                <th className="pb-1 text-right font-normal text-tenue">
+                  Respondieron
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -309,6 +312,9 @@ export default async function Panel() {
                     className={`py-1.5 text-right font-mono ${Number(c.fallidos) ? "font-bold text-vivo" : "text-tenue"}`}
                   >
                     {Number(c.fallidos) || ""}
+                  </td>
+                  <td className="py-1.5 text-right font-mono">
+                    {Number(c.respuestas) || ""}
                   </td>
                 </tr>
               ))}
