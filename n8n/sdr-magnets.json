@@ -3,7 +3,7 @@
   "nodes": [
     {
       "id": "4dc8581f-d637-407b-bde2-35fd8b333013",
-      "name": "Cada 15 minutos",
+      "name": "Cada 2 minutos",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.3,
       "position": [
@@ -15,7 +15,7 @@
           "interval": [
             {
               "field": "minutes",
-              "minutesInterval": 15
+              "minutesInterval": 2
             }
           ]
         }
@@ -44,7 +44,7 @@
     }
   ],
   "connections": {
-    "Cada 15 minutos": {
+    "Cada 2 minutos": {
       "main": [
         [
           {
@@ -59,5 +59,6 @@
   "settings": {
     "executionOrder": "v1",
     "availableInMCP": true
-  }
+  },
+  "description": "Cada 2 minutos llama a /api/magnets/run, que da una vuelta a los imanes encendidos: lee comentarios nuevos con la palabra clave, pide seguir antes de dar nada, comprueba el follow cuando esa persona escribe y entrega el recurso. El ritmo real de lectura lo decide la propia ruta segun lo viejo que sea el iman (2 min las primeras horas, 15 hasta dos dias, 60 despues), asi que llamar cada dos minutos no multiplica las llamadas a Meta."
 }
