@@ -88,7 +88,10 @@ export async function listarConexiones(): Promise<ConexionComposio[]> {
  * conversación.
  * ponytail: sin caché; si algún día pesa, se guarda con un TTL corto.
  */
-export async function cuentaDeCalendario(): Promise<string> {
+export async function cuentaDeCalendario(): Promise<{
+  id: string;
+  userId?: string;
+}> {
   const conexiones = await listarConexiones();
   const viva = conexiones.find(
     (c) => c.toolkit?.slug === "googlecalendar" && c.status === "ACTIVE",
@@ -105,7 +108,24 @@ export async function cuentaDeCalendario(): Promise<string> {
       "",
     );
   }
-  return viva.id;
+  // Los dos, no solo el id: Composio responde 400 "User ID is required with
+  // connected account" si le das la conexión sin decirle de quién es.
+  return { id: viva.id, userId: viva.user_id };
+}
+
+/** Completa las opciones con la conexión de calendario viva, si no vienen. */
+async function conCuenta(opciones: {
+  userId?: string;
+  connectedAccountId?: string;
+  calendarId?: string;
+}) {
+  if (opciones.connectedAccountId && opciones.userId) return opciones;
+  const cuenta = await cuentaDeCalendario();
+  return {
+    ...opciones,
+    connectedAccountId: opciones.connectedAccountId ?? cuenta.id,
+    userId: opciones.userId ?? cuenta.userId,
+  };
 }
 
 /**
@@ -302,11 +322,7 @@ export async function consultarDisponibilidad(
       timezone: reglas.timezone,
       items: [{ id: opciones.calendarId ?? "primary" }],
     },
-    {
-      ...opciones,
-      connectedAccountId:
-        opciones.connectedAccountId ?? (await cuentaDeCalendario()),
-    },
+    await conCuenta(opciones),
   );
 
   return calcularHuecos(extraerOcupado(data), reglas, ahora);
@@ -350,11 +366,7 @@ export async function agendarReunion(
       send_updates: true,
       ...(datos.emailInvitado ? { attendees: [datos.emailInvitado] } : {}),
     },
-    {
-      ...opciones,
-      connectedAccountId:
-        opciones.connectedAccountId ?? (await cuentaDeCalendario()),
-    },
+    await conCuenta(opciones),
   );
 
   return { ...data, meetUrl: data.hangoutLink ?? data.meetUrl };
