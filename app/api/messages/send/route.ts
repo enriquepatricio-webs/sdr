@@ -312,19 +312,16 @@ export async function POST(request: Request) {
           email: lead.email ?? undefined,
         });
         messageId = r.invitation_id;
-      } else if (chatId) {
-        // No basta con `enviarEnChat`: el chat_id guardado caduca en cuanto la
-        // conversación existe de verdad, y entonces el segundo toque a esa
-        // persona devolvía 404 y se daba por fallido.
-        const r = await enviarEnConversacion({
-          accountId: cuenta.unipileAccountId,
-          providerId: lead.providerId,
-          chatId,
-          texto: d.texto,
-        });
-        messageId = r.message_id;
-        chatId = r.chat_id;
       } else if (campana.channel === "instagram" && cuenta.metaToken) {
+        /**
+         * Esta rama va ANTES que la del chat guardado, y no es indiferente.
+         *
+         * `chatId` llega en la petición, y un lead de Instagram puede arrastrar
+         * uno de cuando estas cuentas iban por Unipile. Si esa rama se mira
+         * primero, el mensaje sale hacia una cuenta de Unipile que ya no está
+         * conectada y la conversación se muere sin motivo visible. Con token de
+         * Meta, Meta es el único camino que llega.
+         */
         /**
          * Instagram por la API de Meta.
          *
@@ -354,6 +351,18 @@ export async function POST(request: Request) {
           d.texto,
         );
         messageId = r.message_id ?? "enviado";
+      } else if (chatId) {
+        // No basta con `enviarEnChat`: el chat_id guardado caduca en cuanto la
+        // conversación existe de verdad, y entonces el segundo toque a esa
+        // persona devolvía 404 y se daba por fallido.
+        const r = await enviarEnConversacion({
+          accountId: cuenta.unipileAccountId,
+          providerId: lead.providerId,
+          chatId,
+          texto: d.texto,
+        });
+        messageId = r.message_id;
+        chatId = r.chat_id;
       } else {
         /**
          * Instagram. El `provider_id` guardado NO sirve para abrir un chat.
