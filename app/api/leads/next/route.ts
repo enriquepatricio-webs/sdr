@@ -56,6 +56,7 @@ type Motivo =
   | "campana_pausada"
   | "sin_cuenta"
   | "cuenta_inactiva"
+  | "cuenta_frenada"
   | "fuera_de_ventana"
   | "tope_diario_cuenta"
   | "tope_diario_campana"
@@ -147,6 +148,22 @@ export async function GET(request: Request) {
       }
       if (cuenta.status !== "active") {
         descartar("cuenta_inactiva", `la cuenta está en "${cuenta.status}"`);
+        continue;
+      }
+
+      /**
+       * El proveedor ha frenado la cuenta y todavía no la ha soltado.
+       *
+       * Sin esto, el tope de LinkedIn se descubría lead a lead: cada uno salía
+       * de la cola, se redactaba con el modelo, se intentaba enviar y volvía
+       * con el mismo error. Veinte veces al día, y ni un mensaje entregado.
+       */
+      if (cuenta.throttledUntil && cuenta.throttledUntil > ahora) {
+        reintentos.push(cuenta.throttledUntil);
+        descartar(
+          "cuenta_frenada",
+          `${cuenta.displayName} ha llegado al tope del proveedor; vuelve el ${cuenta.throttledUntil.toISOString()}`,
+        );
         continue;
       }
 

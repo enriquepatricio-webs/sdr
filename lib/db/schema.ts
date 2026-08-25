@@ -256,6 +256,19 @@ export const accounts = pgTable(
     metaTokenExpiresAt: timestamp('meta_token_expires_at', { withTimezone: true }),
     /** El id de la cuenta de Instagram segun Meta. Lo devuelve el propio token. */
     igUserId: text('ig_user_id'),
+    /**
+     * Hasta cuándo esta cuenta no puede enviar porque el proveedor la ha frenado.
+     *
+     * LinkedIn contesta "You have reached a temporary provider limit" cuando la
+     * cuenta ha invitado por encima de lo que le tolera esa semana. No es un
+     * problema del destinatario: es la cuenta entera la que está parada, así que
+     * el siguiente lead del lote fallaría igual. Sin esta marca, un tope de
+     * LinkedIn se comía los veinte intentos del día uno detrás de otro.
+     *
+     * Es una fecha y no un estado porque se levanta sola: poner la cuenta en
+     * `paused` obligaría a acordarse de reactivarla a mano.
+     */
+    throttledUntil: timestamp('throttled_until', { withTimezone: true }),
     dailyLimit: integer('daily_limit').notNull().default(DEFAULT_DAILY_LIMIT),
     /** null = sin tope horario. Obligatorio en la práctica para Instagram. */
     hourlyLimit: integer('hourly_limit'),

@@ -24,7 +24,7 @@ import {
 } from "./unipile";
 import {
   DESTINATARIO_IMPOSIBLE,
-  YA_TIENE_LA_INVITACION,
+  CUENTA_FRENADA,
   tipoDeErrorUnipile,
 } from "../app/api/messages/send/route";
 
@@ -566,8 +566,11 @@ await prueba("si falta is_sender, se cae al respaldo de comparar ids", () => {
 const CUERPOS = {
   invalid_recipient:
     '{"status":422,"type":"errors/invalid_recipient","title":"Recipient cannot be reached","detail":"Make sure that the recipient ID is valid and that the corresponding profile is not locked."}',
+  // El detalle es el que manda LinkedIn de verdad, no un "...": el titulo habla
+  // de reenviar y el detalle habla del tope de la CUENTA. Leerlo como si fuera
+  // cosa del destinatario saco de la cola a 62 prospectos sin escribirles.
   cannot_resend_yet:
-    '{"status":422,"type":"errors/cannot_resend_yet","title":"Cannot resend yet","detail":"..."}',
+    '{"status":422,"type":"errors/cannot_resend_yet","title":"Cannot resend yet","detail":"You have reached a temporary provider limit. Please try again later."}',
   provider_error:
     '{"status":500,"type":"errors/provider_error","title":"Provider error","detail":"..."}',
 };
@@ -593,7 +596,13 @@ await prueba("un perfil bloqueado no se reintenta; un 500 sí", () => {
   // El 500 fuera de la lista es deliberado: era el sintoma de nuestro propio
   // bug del identificador de Google Maps, y habria quemado 34 leads buenos.
   assert.ok(!DESTINATARIO_IMPOSIBLE.includes("provider_error"));
-  assert.ok(!DESTINATARIO_IMPOSIBLE.includes(YA_TIENE_LA_INVITACION));
+  // El tope de la cuenta tampoco: el destinatario esta perfectamente bien y
+  // tiene que volver a la cola cuando LinkedIn suelte la cuenta.
+  assert.ok(!DESTINATARIO_IMPOSIBLE.includes(CUENTA_FRENADA));
+  assert.equal(
+    tipoDeErrorUnipile(new UnipileError("x", 422, CUERPOS.cannot_resend_yet)),
+    CUENTA_FRENADA,
+  );
 });
 
 console.log(`\n${ok} comprobaciones correctas`);

@@ -49,14 +49,31 @@ const MAX_FALLOS_POR_LEAD = 3;
 export const DESTINATARIO_IMPOSIBLE = ["invalid_recipient", "user_unreachable"];
 
 /**
- * LinkedIn dice que no se puede reinvitar todavía.
+ * LinkedIn ha frenado la cuenta entera.
  *
- * Significa que la invitación ANTERIOR sigue en pie: esa persona ya tiene
- * nuestro mensaje. Contarlo como fallo y devolver el lead a la cola es pedirle
- * a LinkedIn invitar tres veces a la misma persona, que es justo el patrón por
- * el que se restringen cuentas.
+ * El nombre del error engaña: `cannot_resend_yet` suena a "esa persona ya tiene
+ * tu invitación", y así se leía. El detalle real es otro —"You have reached a
+ * temporary provider limit"— y habla de la CUENTA, no del destinatario.
+ *
+ * La diferencia costó 62 prospectos: se marcaban como contactados sin haber
+ * recibido nada, salían de la cola para siempre y el siguiente lead del lote
+ * chocaba contra la misma pared. En toda la historia de la campaña llegaron a
+ * salir tres invitaciones.
+ *
+ * Lo correcto es lo contrario de lo que hacía: el lead vuelve a la cola intacto
+ * y quien se aparta es la cuenta, hasta que el proveedor la suelte.
  */
-export const YA_TIENE_LA_INVITACION = "cannot_resend_yet";
+export const CUENTA_FRENADA = "cannot_resend_yet";
+
+/**
+ * Cuánto se aparta una cuenta frenada.
+ *
+ * Los topes de LinkedIn se cuentan por semana, pero se sueltan poco a poco: no
+ * hace falta esperar siete días, sí evitar volver dentro de un rato. Doce horas
+ * hacen que un freno de la mañana no se coma también la tarde, y que uno de la
+ * tarde deje la mañana siguiente libre.
+ */
+export const HORAS_DE_FRENO = 12;
 
 /** El `type` de la respuesta de Unipile, si el error viene de ahí. */
 export function tipoDeErrorUnipile(err: unknown): string | null {
@@ -458,16 +475,29 @@ export async function POST(request: Request) {
        */
       const tipo = tipoDeErrorUnipile(err);
 
-      if (tipo === YA_TIENE_LA_INVITACION) {
-        // Ya está contactado de verdad. Sale de la cola sin pasar por 'error':
-        // no es un lead roto, es uno que va por delante de nosotros.
+      if (tipo === CUENTA_FRENADA) {
+        /**
+         * El lead no ha hecho nada mal: se queda como estaba y vuelve a la cola
+         * cuando la cuenta esté libre. Lo que se aparta es la cuenta, porque el
+         * siguiente del lote fallaría exactamente igual.
+         */
+        const libre = new Date(Date.now() + HORAS_DE_FRENO * 3600_000);
+        /**
+         * Y el toque se borra en vez de quedarse en 'fallido'.
+         *
+         * No se envió nada: contarlo como fallo del lead lo acercaría al tercer
+         * strike que lo manda a 'error' por algo que no ha hecho, y llenaría el
+         * panel de fallos que no son de nadie. El motivo queda en el registro.
+         */
+        await db.delete(touches).where(eq(touches.id, toque.id));
         await db
           .update(leads)
-          .set({
-            status: lead.status === "nuevo" ? "contactado" : lead.status,
-            nextActionAt: null,
-          })
+          .set({ nextActionAt: libre })
           .where(eq(leads.id, lead.id));
+        await db
+          .update(accounts)
+          .set({ throttledUntil: libre })
+          .where(eq(accounts.id, cuenta.id));
       } else if (tipo && DESTINATARIO_IMPOSIBLE.includes(tipo)) {
         await db
           .update(leads)
