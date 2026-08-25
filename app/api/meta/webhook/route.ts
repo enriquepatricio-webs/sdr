@@ -108,7 +108,21 @@ export async function POST(request: Request) {
         // Cuánto mide el secreto, no el secreto. Un valor mal pegado —el App ID
         // en vez de la clave, o con un salto de línea detrás— se ve aquí.
         largoDelSecreto: process.env.META_APP_SECRET?.length ?? 0,
-        bytesDelCuerpo: crudo.length,
+        bytesDelCuerpo: Buffer.byteLength(crudo, "utf8"),
+        caracteresDelCuerpo: crudo.length,
+        /**
+         * Todas las cabeceras de Meta, no solo la que espero.
+         *
+         * Meta manda además una firma sha1 en `x-hub-signature`, y hay
+         * integraciones que solo reciben esa. Mirar únicamente la que doy por
+         * buena es como no mirar: cada comprobación cuesta que una persona vaya
+         * a un panel y pulse un botón, así que esta vez se recoge todo de una.
+         */
+        cabeceras: Object.fromEntries(
+          [...request.headers.entries()].filter(
+            ([k]) => k.startsWith("x-hub") || k === "content-type",
+          ),
+        ),
         cuerpo: crudo.slice(0, 500),
       },
     });
