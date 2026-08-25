@@ -31,12 +31,34 @@ export async function GET(request: Request) {
     }
     const t = cuenta.metaToken;
     const G = "https://graph.instagram.com";
+    /**
+     * El token va en la cabecera, igual que en el resto del cliente de Meta.
+     *
+     * Como parámetro acaba escrito en cualquier sitio donde se copie la URL: el
+     * registro de la plataforma, una traza, un mensaje pegado en un chat. Vale
+     * sesenta días y da acceso de lectura y escritura a la cuenta.
+     */
     const leer = async (ruta: string) => {
-      const res = await fetch(
-        `${G}${ruta}${ruta.includes("?") ? "&" : "?"}access_token=${encodeURIComponent(t)}`,
-        { cache: "no-store" },
-      );
-      return { estado: res.status, cuerpo: (await res.text()).slice(0, 700) };
+      const res = await fetch(`${G}${ruta}`, {
+        headers: { Authorization: `Bearer ${t}` },
+        cache: "no-store",
+      });
+      const texto = await res.text();
+      /**
+       * El cuerpo entero para trabajar, recortado solo para enseñarlo.
+       *
+       * Se recortaba antes de parsearlo, así que en cuanto la cuenta tuvo cinco
+       * publicaciones con su enlace el JSON pasaba de 700 caracteres y el
+       * diagnóstico entero moría con "Unterminated string in JSON": la
+       * herramienta para ver qué falla era lo único que fallaba.
+       */
+      let datos: unknown = null;
+      try {
+        datos = JSON.parse(texto);
+      } catch {
+        datos = null;
+      }
+      return { estado: res.status, cuerpo: texto.slice(0, 700), datos };
     };
 
     /**
@@ -47,18 +69,18 @@ export async function GET(request: Request) {
      */
     const dm = url.searchParams.get("dm");
     if (dm) {
-      const res = await fetch(
-        `${G}/me/messages?access_token=${encodeURIComponent(t)}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            recipient: { id: dm },
-            message: { text: url.searchParams.get("texto") ?? "prueba" },
-          }),
-          cache: "no-store",
+      const res = await fetch(`${G}/me/messages`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${t}`,
+          "Content-Type": "application/json",
         },
-      );
+        body: JSON.stringify({
+          recipient: { id: dm },
+          message: { text: url.searchParams.get("texto") ?? "prueba" },
+        }),
+        cache: "no-store",
+      });
       return NextResponse.json({
         destinatario: dm,
         estado: res.status,
@@ -78,10 +100,11 @@ export async function GET(request: Request) {
     }
 
     const media = await leer("/me/media?fields=id,permalink&limit=5");
-    const primera = JSON.parse(media.cuerpo).data?.[0]?.id;
+    const primera = (media.datos as { data?: { id?: string }[] } | null)
+      ?.data?.[0]?.id;
     const comentarios = primera
       ? await leer(`/${primera}/comments?fields=id,text,username,from&limit=10`)
-      : { estado: 0, cuerpo: "sin publicaciones" };
+      : { estado: 0, cuerpo: "sin publicaciones", datos: null };
 
     return NextResponse.json({
       cuenta: cuenta.instagramUsername,
