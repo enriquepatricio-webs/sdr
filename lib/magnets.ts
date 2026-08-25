@@ -229,10 +229,22 @@ export function minutosEntreLecturas(
 /**
  * Cuántas veces se pide el follow, contando la primera.
  *
- * Dos: la petición y un recordatorio. A la tercera ya no es un recordatorio,
- * es insistir.
+ * Estaba en dos, y a la tercera respuesta el sistema se callaba. Desde el otro
+ * lado eso no se distingue de un bot roto: la persona escribe, no pasa nada, y
+ * se va. Callarse nunca es la respuesta correcta a alguien que te está
+ * hablando; el tope existe para no repetir lo mismo eternamente, no para
+ * ignorar a nadie.
  */
-export const MAX_PETICIONES_DE_FOLLOW = 2;
+export const MAX_PETICIONES_DE_FOLLOW = 5;
+
+/**
+ * Lo que se contesta cuando ya se han gastado los recordatorios.
+ *
+ * Se deja de pedir el follow, pero no se deja de responder: se le da salida a
+ * la conversación en vez de dejarla muerta.
+ */
+export const SIN_MAS_RECORDATORIOS =
+  "Sigo sin verte por ahí, pero no te preocupes. Si le das a seguir y me escribes, te lo mando al momento.";
 
 /** Paso del recordatorio. Aparte de los tres del embudo para no pisarlos. */
 export const PASO_RECORDATORIO = 4;

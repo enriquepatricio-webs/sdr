@@ -16,6 +16,7 @@ import {
   PASO_DE_ESTADO,
   PASO_RECORDATORIO,
   RECORDATORIO_FOLLOW,
+  SIN_MAS_RECORDATORIOS,
   TRANSICIONES,
   comentariosConLaClave,
   minutosEntreLecturas,
@@ -197,20 +198,24 @@ test('"no me escribas" para el embudo', () => {
   assert.equal(pideQueLeDejen("gracias, me lo miro"), false);
 });
 
-test("el recordatorio del follow sale una sola vez y sin dinero", () => {
-  // Es un texto fijo que va a mucha gente: si algún día alguien mete una cifra
-  // ahí, el filtro de salida lo bloquea y el contacto se queda sin nada.
+test("el recordatorio del follow se pide varias veces, pero nunca en silencio", () => {
+  // Son textos fijos que van a mucha gente: si algun dia alguien mete una cifra
+  // ahi, el filtro de salida los bloquea y el contacto se queda sin nada.
   assert.equal(MENCIONA_DINERO.test(RECORDATORIO_FOLLOW), false);
+  assert.equal(MENCIONA_DINERO.test(SIN_MAS_RECORDATORIOS), false);
 
-  // La petición inicial cuenta como una. Con el tope en dos, queda UN
-  // recordatorio: a la tercera ya no es recordar, es insistir.
-  assert.equal(MAX_PETICIONES_DE_FOLLOW, 2);
-  const trasLaPeticionInicial = 1;
-  assert.ok(trasLaPeticionInicial < MAX_PETICIONES_DE_FOLLOW);
-  assert.ok(trasLaPeticionInicial + 1 >= MAX_PETICIONES_DE_FOLLOW);
+  // Cinco: la peticion inicial y cuatro recordatorios. Estaba en dos y a la
+  // tercera respuesta el sistema se callaba, que desde el otro lado no se
+  // distingue de un bot roto.
+  assert.equal(MAX_PETICIONES_DE_FOLLOW, 5);
 
-  // Y su paso no puede pisar a ninguno de los tres del embudo, o el
-  // deduplicador daría el recurso por entregado sin haberlo mandado.
+  // Y agotarlos NO significa dejar de contestar: significa dejar de pedir. Por
+  // eso hay un texto distinto para ese caso, y no un silencio.
+  assert.ok(SIN_MAS_RECORDATORIOS.length > 0);
+  assert.notEqual(SIN_MAS_RECORDATORIOS, RECORDATORIO_FOLLOW);
+
+  // Su paso no puede pisar a ninguno de los tres del embudo, o el deduplicador
+  // daria el recurso por entregado sin haberlo mandado.
   assert.ok(
     !Object.values(PASO_DE_ESTADO).includes(PASO_RECORDATORIO as never),
   );

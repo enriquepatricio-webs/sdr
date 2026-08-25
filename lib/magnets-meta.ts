@@ -21,6 +21,7 @@ import {
   MAX_PETICIONES_DE_FOLLOW,
   RECORDATORIO_FOLLOW,
   RESPUESTA_PUBLICA,
+  SIN_MAS_RECORDATORIOS,
   comentariosConLaClave,
   minutosHastaElNudge,
   pideQueLeDejen,
@@ -350,7 +351,18 @@ export async function atenderMensaje(
      * de que te escriban es lo que hace que parezca un bot roto.
      */
     if (fila.contacto.followAsks >= MAX_PETICIONES_DE_FOLLOW) {
-      return { atendido: false, que: "ya se le recordó y sigue sin seguir" };
+      // Se deja de PEDIR, no de responder. Quien escribe merece respuesta
+      // aunque ya no haya nada nuevo que pedirle.
+      await mensajeDirecto(
+        cuenta.token,
+        cuenta.igUserId,
+        igsid,
+        SIN_MAS_RECORDATORIOS,
+      );
+      return {
+        atendido: true,
+        que: "sigue sin seguir: se le ha contestado igual",
+      };
     }
     await mensajeDirecto(
       cuenta.token,
