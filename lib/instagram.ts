@@ -360,6 +360,29 @@ export async function mensajePrivadoAlComentario(
   });
 }
 
+/**
+ * Suscribe la cuenta a los avisos de Meta.
+ *
+ * Configurar el webhook en la app NO basta: cada cuenta de Instagram tiene que
+ * suscribirse por separado. Sin esto llegan los eventos de prueba de la consola
+ * —que salen de la app— y ninguno real, que es exactamente lo que parecía un
+ * webhook roto.
+ */
+export async function suscribirCuenta(
+  token: string,
+): Promise<{ success?: boolean }> {
+  return pedir<{ success?: boolean }>(
+    `/me/subscribed_apps?subscribed_fields=comments,messages`,
+    token,
+    { method: "POST", body: {} },
+  );
+}
+
+/** A qué está suscrita la cuenta ahora mismo. */
+export async function suscripciones(token: string): Promise<unknown> {
+  return pedir(`/me/subscribed_apps`, token);
+}
+
 export type PerfilDeQuienEscribe = {
   id: string;
   username?: string;

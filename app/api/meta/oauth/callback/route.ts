@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { accounts, runLogs } from "@/lib/db/schema";
-import { canjearCodigo, quienEs } from "@/lib/instagram";
+import { canjearCodigo, quienEs, suscribirCuenta } from "@/lib/instagram";
 import { urlDeVuelta } from "../start/route";
 
 export const dynamic = "force-dynamic";
@@ -52,6 +52,27 @@ export async function GET(request: Request) {
         status: "active",
       })
       .where(eq(accounts.id, accountId));
+
+    /**
+     * Suscribir la cuenta a los avisos, aquí y ahora.
+     *
+     * Configurar el webhook en la app no basta: cada cuenta va por su cuenta. Y
+     * es el tipo de paso que se olvida, porque sin él todo parece bien —los
+     * eventos de prueba de la consola llegan igual— y no entra ni un comentario
+     * real.
+     */
+    try {
+      await suscribirCuenta(token.access_token);
+    } catch (err) {
+      await db.insert(runLogs).values({
+        workflow: "instagram",
+        level: "warn",
+        message: `Token guardado, pero la cuenta no quedó suscrita a los avisos: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+        payload: { accountId },
+      });
+    }
 
     let perfil: { id: string; username: string } | null = null;
     try {
