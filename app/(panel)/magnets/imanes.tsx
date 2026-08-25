@@ -151,8 +151,8 @@ export function Imanes({
             {imanes.length} {imanes.length === 1 ? "imán" : "imanes"}
           </h1>
           <p className="mt-1 text-xs text-tenue">
-            Quien comenta la palabra recibe un DM pidiéndole que siga a{" "}
-            {empresa}. Cuando sigue, se le manda el recurso.
+            Quien comenta la palabra recibe el recurso por privado. Si
+            todavía no sigue a {empresa}, primero se le pide que lo haga.
           </p>
         </div>
         <button
@@ -243,8 +243,8 @@ export function Imanes({
           <label className="space-y-1 sm:col-span-2">
             <span className="etiqueta">Mensaje pidiendo el follow</span>
             <p className="text-xs text-tenue">
-              Es el primer DM. Va antes de entregar nada; el recurso solo sale
-              cuando la persona sigue de verdad.
+              Solo se manda a quien todavía no te sigue. A quien ya te sigue no
+              se le pide nada: le llega el recurso directamente.
             </p>
             <textarea
               name="followMessage"
@@ -257,8 +257,8 @@ export function Imanes({
           <label className="space-y-1 sm:col-span-2">
             <span className="etiqueta">Recurso (texto o enlace)</span>
             <p className="text-xs text-tenue">
-              Lo que recibe una vez comprobado que sigue. Sin cifras de dinero:
-              no salen por chat.
+              Lo que recibe cuando se ha comprobado que sigue. Sin cifras de
+              dinero: no salen por chat.
             </p>
             <textarea name="resource" required rows={3} className={control} />
           </label>
@@ -268,7 +268,7 @@ export function Imanes({
               disabled={!cuentas.length || ocupado !== null}
               className="border border-linea-fuerte px-3 py-1.5 text-sm hover:border-ensayo hover:text-ensayo disabled:opacity-40"
             >
-              Crear apagado
+              Crear y encender
             </button>
             {!cuentas.length && (
               <span className="ml-3 text-xs text-tenue">
