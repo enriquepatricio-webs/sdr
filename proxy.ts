@@ -26,6 +26,10 @@ const PUBLIC_PATHS = [
   // sabe nada de nuestra cabecera: se autentica con la firma HMAC del cuerpo
   // contra el App Secret, que es más fuerte que una clave compartida.
   "/api/meta/webhook",
+  // Política de privacidad y eliminación de datos. Un revisor de Meta las abre
+  // sin haber iniciado sesión nunca: detrás del login vería la pantalla de
+  // acceso y rechazaría la solicitud por política inaccesible.
+  "/legal",
 ];
 
 function isPublic(pathname: string): boolean {
