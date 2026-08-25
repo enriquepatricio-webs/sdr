@@ -28,7 +28,19 @@ export async function campanaDelImanId(
     .insert(campaigns)
     .values({
       name: nombre,
-      status: "draft",
+      /**
+       * En marcha desde el primer momento, no en borrador.
+       *
+       * Una campaña en frío nace en borrador porque alguien tiene que revisarla
+       * antes de escribir a desconocidos. Esta es lo contrario: solo entran
+       * personas que acaban de pedirnos algo por privado y ya tienen el
+       * recurso. Lo único que la campaña habilita es seguir la conversación.
+       *
+       * En borrador, la cola de trabajo la descartaba por "campaña pausada" y
+       * el "¿qué tal?" que se programa al entregar no salía nunca: el recurso
+       * se mandaba y ahí se acababa todo.
+       */
+      status: "running",
       workspaceId: iman.workspaceId,
       accountId: iman.accountId,
       channel: "instagram",
