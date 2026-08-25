@@ -39,6 +39,33 @@ export async function GET(request: Request) {
       return { estado: res.status, cuerpo: (await res.text()).slice(0, 700) };
     };
 
+    /**
+     * Mandar un DM y enseñar la respuesta ENTERA de Meta.
+     *
+     * Un envío puede devolver 200 y no llegar, y sin ver el cuerpo no hay forma
+     * de distinguir "aceptado y entregado" de "aceptado y descartado".
+     */
+    const dm = url.searchParams.get("dm");
+    if (dm) {
+      const res = await fetch(
+        `${G}/me/messages?access_token=${encodeURIComponent(t)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            recipient: { id: dm },
+            message: { text: url.searchParams.get("texto") ?? "prueba" },
+          }),
+          cache: "no-store",
+        },
+      );
+      return NextResponse.json({
+        destinatario: dm,
+        estado: res.status,
+        respuesta: (await res.text()).slice(0, 900),
+      });
+    }
+
     // Quien comentó de verdad, para poder preguntar por él.
     const personaId = url.searchParams.get("persona");
     if (personaId) {
