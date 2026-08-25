@@ -16,6 +16,7 @@ const RUTAS = [
   { href: "/", etiqueta: "Panel" },
   { href: "/campaigns", etiqueta: "Campañas" },
   { href: "/leads", etiqueta: "Leads" },
+  { href: "/magnets", etiqueta: "Lead magnets" },
   { href: "/usuarios", etiqueta: "Usuarios" },
   { href: "/settings", etiqueta: "Ajustes" },
 ];
