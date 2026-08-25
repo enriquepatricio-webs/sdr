@@ -50,12 +50,14 @@ export async function GET(request: Request) {
 
     await db.insert(runLogs).values({
       workflow: "instagram",
-      level: "info",
-      message: `@${perfil.username} autorizó la app. Token válido ${Math.round(token.expires_in / 86400)} días.`,
+      level: token.sinAlargar ? "warn" : "info",
+      message: token.sinAlargar
+        ? `@${perfil.username} autorizó, pero el token se quedó corto (1 h): ${token.sinAlargar}`
+        : `@${perfil.username} autorizó la app. Token válido ${Math.round(token.expires_in / 86400)} días.`,
       payload: { accountId, igUserId: perfil.id },
     });
 
-    panel.searchParams.set("instagram", "ok");
+    panel.searchParams.set("instagram", token.sinAlargar ? "corto" : "ok");
     panel.searchParams.set("usuario", perfil.username);
     return NextResponse.redirect(panel);
   } catch (err) {

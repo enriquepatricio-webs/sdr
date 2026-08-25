@@ -79,10 +79,15 @@ export type TokenLargo = {
  * Son DOS pasos y no uno: el primero da un token de una hora, y sin el segundo
  * la conexión se caería sola esa misma tarde sin que nadie entendiera por qué.
  */
+export type Canje = TokenLargo & {
+  /** Si se quedó en el token corto, por qué. null si se alargó bien. */
+  sinAlargar: string | null;
+};
+
 export async function canjearCodigo(
   code: string,
   redirectUri: string,
-): Promise<TokenLargo> {
+): Promise<Canje> {
   const { appId, appSecret } = config();
 
   const corta = await fetch(TOKEN, {
@@ -112,6 +117,14 @@ export async function canjearCodigo(
     user_id: number | string;
   };
 
+  /**
+   * Si no se puede alargar, se guarda el corto y se sigue.
+   *
+   * El token corto vale una hora, que es de sobra para comprobar que todo lo
+   * demás funciona y para renovarlo después. Tirar la autorización entera
+   * porque falló el segundo paso obliga a la persona a repetir el proceso sin
+   * que nadie haya podido mirar qué token teníamos.
+   */
   const larga = await fetch(
     `${GRAPH}/access_token?${new URLSearchParams({
       grant_type: "ig_exchange_token",
@@ -122,18 +135,24 @@ export async function canjearCodigo(
   );
   const textoLarga = await larga.text();
   if (!larga.ok) {
-    throw new InstagramError(
-      `No se pudo alargar el token: ${larga.status} ${textoLarga.slice(0, 300)}`,
-      larga.status,
-      textoLarga,
-    );
+    return {
+      access_token: tokenCorto,
+      user_id: String(userId),
+      expires_in: 3600,
+      sinAlargar: `${larga.status} ${textoLarga.slice(0, 300)}`,
+    };
   }
   const { access_token, expires_in } = JSON.parse(textoLarga) as {
     access_token: string;
     expires_in: number;
   };
 
-  return { access_token, user_id: String(userId), expires_in };
+  return {
+    access_token,
+    user_id: String(userId),
+    expires_in,
+    sinAlargar: null,
+  };
 }
 
 /**
