@@ -105,6 +105,17 @@ export async function POST(request: Request) {
         motivo: veredicto.motivo,
         firmaRecibida: cabecera,
         firmaCalculada: veredicto.calculada ?? null,
+        /**
+         * La misma comprobación en sha1, que Meta manda en paralelo.
+         *
+         * Si la sha1 cuadrase y la sha256 no, el fallo sería mío y no del
+         * secreto. Cuesta una línea y evita otra ronda de "prueba otra vez".
+         */
+        sha1Calculada: process.env.META_APP_SECRET
+          ? createHmac("sha1", process.env.META_APP_SECRET)
+              .update(crudo)
+              .digest("hex")
+          : null,
         // Cuánto mide el secreto, no el secreto. Un valor mal pegado —el App ID
         // en vez de la clave, o con un salto de línea detrás— se ve aquí.
         largoDelSecreto: process.env.META_APP_SECRET?.length ?? 0,
