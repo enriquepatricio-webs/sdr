@@ -82,6 +82,8 @@ export type TokenLargo = {
 export type Canje = TokenLargo & {
   /** Si se quedó en el token corto, por qué. null si se alargó bien. */
   sinAlargar: string | null;
+  /** Lo que la cuenta concedió. Vacío = autorizó sin dar ningún permiso. */
+  permisos: string[];
 };
 
 export async function canjearCodigo(
@@ -110,11 +112,21 @@ export async function canjearCodigo(
       textoCorta,
     );
   }
-  const { access_token: tokenCorto, user_id: userId } = JSON.parse(
-    textoCorta,
-  ) as {
+  const {
+    access_token: tokenCorto,
+    user_id: userId,
+    permissions,
+  } = JSON.parse(textoCorta) as {
     access_token: string;
     user_id: number | string;
+    /**
+     * Lo que la cuenta ha concedido de verdad.
+     *
+     * Meta emite el token aunque no conceda NADA, y entonces cada lectura
+     * responde "Unsupported request - method type: get", que suena a ruta mal
+     * escrita y no a permiso ausente. Es el dato que distingue las dos cosas.
+     */
+    permissions?: string[] | string;
   };
 
   /**
@@ -125,6 +137,12 @@ export async function canjearCodigo(
    * porque falló el segundo paso obliga a la persona a repetir el proceso sin
    * que nadie haya podido mirar qué token teníamos.
    */
+  const concedidos = Array.isArray(permissions)
+    ? permissions
+    : typeof permissions === "string" && permissions
+      ? permissions.split(",")
+      : [];
+
   const larga = await fetch(
     `${GRAPH}/access_token?${new URLSearchParams({
       grant_type: "ig_exchange_token",
@@ -140,6 +158,7 @@ export async function canjearCodigo(
       user_id: String(userId),
       expires_in: 3600,
       sinAlargar: `${larga.status} ${textoLarga.slice(0, 300)}`,
+      permisos: concedidos,
     };
   }
   const { access_token, expires_in } = JSON.parse(textoLarga) as {
@@ -152,6 +171,7 @@ export async function canjearCodigo(
     user_id: String(userId),
     expires_in,
     sinAlargar: null,
+    permisos: concedidos,
   };
 }
 

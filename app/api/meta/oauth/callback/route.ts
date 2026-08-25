@@ -67,17 +67,24 @@ export async function GET(request: Request) {
         message: `Token guardado, pero no se pudo leer el perfil: ${
           err instanceof Error ? err.message : String(err)
         }`,
-        payload: { accountId, igUserId: token.user_id },
+        payload: {
+          accountId,
+          igUserId: token.user_id,
+          permisos: token.permisos,
+        },
       });
     }
 
     await db.insert(runLogs).values({
       workflow: "instagram",
       level: token.sinAlargar ? "warn" : "info",
-      message: token.sinAlargar
-        ? `${perfil ? "@" + perfil.username : "La cuenta"} autorizó, pero el token se quedó corto (1 h): ${token.sinAlargar}`
-        : `${perfil ? "@" + perfil.username : "La cuenta"} autorizó la app. Token válido ${Math.round(token.expires_in / 86400)} días.`,
-      payload: { accountId, igUserId: token.user_id },
+      message:
+        token.permisos.length === 0
+          ? `La cuenta autorizó pero Meta no concedió NINGÚN permiso. Casi siempre es que la cuenta no ha aceptado la invitación de tester en Instagram.`
+          : token.sinAlargar
+            ? `${perfil ? "@" + perfil.username : "La cuenta"} autorizó, pero el token se quedó corto (1 h): ${token.sinAlargar}`
+            : `${perfil ? "@" + perfil.username : "La cuenta"} autorizó la app. Token válido ${Math.round(token.expires_in / 86400)} días.`,
+      payload: { accountId, igUserId: token.user_id, permisos: token.permisos },
     });
 
     panel.searchParams.set("instagram", token.sinAlargar ? "corto" : "ok");
