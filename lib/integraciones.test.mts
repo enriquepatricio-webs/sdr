@@ -9,6 +9,7 @@
 import assert from "node:assert/strict";
 import type { BookingRules } from "./db/schema";
 import {
+  cuentaDeCalendario,
   calcularHuecos,
   consultarDisponibilidad,
   describirHueco,
@@ -312,6 +313,40 @@ await prueba("la duración del hueco es la del playbook", () => {
   assert.equal((h[0].fin.getTime() - h[0].inicio.getTime()) / 60000, 45);
 });
 
+/* ---- Composio: elegir la conexion --------------------------------------- */
+
+await prueba("se elige la conexión de calendario que está viva", async () => {
+  // Caso real: cuatro conexiones de Google Calendar en la misma cuenta, dos
+  // caducadas. Coger la primera que aparezca da un 400 que no dice nada.
+  simular({
+    items: [
+      { id: "ca_drive", toolkit: { slug: "googledrive" }, status: "ACTIVE" },
+      {
+        id: "ca_vieja",
+        toolkit: { slug: "googlecalendar" },
+        status: "EXPIRED",
+      },
+      { id: "ca_buena", toolkit: { slug: "googlecalendar" }, status: "ACTIVE" },
+    ],
+  });
+  assert.equal(await cuentaDeCalendario(), "ca_buena");
+});
+
+await prueba("sin ninguna conexión viva se explica por qué", async () => {
+  // Devolver null aquí acabaría en un 400 de Composio sobre user_id, que no
+  // tiene nada que ver con lo que de verdad pasa: hay que reconectar.
+  simular({
+    items: [
+      {
+        id: "ca_vieja",
+        toolkit: { slug: "googlecalendar" },
+        status: "EXPIRED",
+      },
+    ],
+  });
+  await assert.rejects(() => cuentaDeCalendario(), /caducad|reconect/i);
+});
+
 /* ---- Composio: la llamada ------------------------------------------------ */
 
 await prueba("consultarDisponibilidad pide el rango correcto", async () => {
@@ -319,7 +354,11 @@ await prueba("consultarDisponibilidad pide el rango correcto", async () => {
     successful: true,
     data: { calendars: { primary: { busy: [] } } },
   });
-  await consultarDisponibilidad(REGLAS, {}, LUNES);
+  await consultarDisponibilidad(
+    REGLAS,
+    { connectedAccountId: "ca_prueba" },
+    LUNES,
+  );
   assert.ok(c[0].url.includes("GOOGLECALENDAR_FIND_FREE_SLOTS"));
   const body = JSON.parse(c[0].init.body as string);
   assert.equal(body.arguments.timezone, "Europe/Madrid");
@@ -332,14 +371,27 @@ await prueba("un successful:false lanza aunque el HTTP sea 200", async () => {
   // "no tengo hueco" de "no he podido mirar", y acabaría inventándose uno.
   simular({ successful: false, error: "token caducado" });
   await assert.rejects(
-    () => consultarDisponibilidad(REGLAS, {}, LUNES),
+    () =>
+      consultarDisponibilidad(
+        REGLAS,
+        { connectedAccountId: "ca_prueba" },
+        LUNES,
+      ),
     /token caducado/,
   );
 });
 
 await prueba("un 500 de Composio lanza", async () => {
   simular({ error: "boom" }, 500);
-  await assert.rejects(() => consultarDisponibilidad(REGLAS, {}, LUNES), /500/);
+  await assert.rejects(
+    () =>
+      consultarDisponibilidad(
+        REGLAS,
+        { connectedAccountId: "ca_prueba" },
+        LUNES,
+      ),
+    /500/,
+  );
 });
 
 await prueba(
@@ -357,7 +409,11 @@ await prueba(
         },
       },
     });
-    const h = await consultarDisponibilidad(REGLAS, {}, LUNES);
+    const h = await consultarDisponibilidad(
+      REGLAS,
+      { connectedAccountId: "ca_prueba" },
+      LUNES,
+    );
     const elLunes = h.filter((x) =>
       x.inicio.toISOString().startsWith("2026-08-17"),
     );

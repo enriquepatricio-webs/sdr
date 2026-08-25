@@ -76,6 +76,39 @@ export async function listarConexiones(): Promise<ConexionComposio[]> {
 }
 
 /**
+ * La conexión de Google Calendar que se puede usar ahora mismo.
+ *
+ * No se fija a mano en un ajuste porque las conexiones caducan y se rehacen: en
+ * esta cuenta hay cuatro de Google Calendar y dos ya están caducadas. Un id
+ * escrito a fuego funcionaría hasta la primera reconexión y luego fallaría con
+ * un error que no dice nada. Preguntando cuál está viva, reconectar en Composio
+ * arregla el calendario sin tocar código.
+ *
+ * Cuesta una llamada extra por consulta de agenda, que son unas pocas por
+ * conversación.
+ * ponytail: sin caché; si algún día pesa, se guarda con un TTL corto.
+ */
+export async function cuentaDeCalendario(): Promise<string> {
+  const conexiones = await listarConexiones();
+  const viva = conexiones.find(
+    (c) => c.toolkit?.slug === "googlecalendar" && c.status === "ACTIVE",
+  );
+  if (!viva) {
+    const cuantas = conexiones.filter(
+      (c) => c.toolkit?.slug === "googlecalendar",
+    ).length;
+    throw new ComposioError(
+      cuantas > 0
+        ? `Hay ${cuantas} conexiones de Google Calendar en Composio y ninguna activa: están caducadas. Vuelve a conectarla en Composio.`
+        : "No hay ninguna conexión de Google Calendar en Composio.",
+      409,
+      "",
+    );
+  }
+  return viva.id;
+}
+
+/**
  * Ejecuta una herramienta.
  *
  * `version` se manda siempre: Composio exige versión explícita del toolkit para
