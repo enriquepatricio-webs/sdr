@@ -14,10 +14,9 @@ export const dynamic = "force-dynamic";
  * preguntar, Meta avisa. Es lo que hace que ManyChat conteste en segundos y
  * gratis, y es la única forma de que un comentario dispare un DM al instante.
  *
- * De momento solo verifica y guarda. Enganchar el evento `comments` al embudo
- * —que sigue entero en `lib/magnets.ts`— necesita los tokens de cada cuenta,
- * que llegan cuando la app esté aprobada. Guardar desde ya sirve para ver la
- * forma real de los eventos antes de escribir nada contra ella.
+ * Cada evento se atiende contra la cuenta que lo ha recibido, que viene en
+ * `entry[].id`. Es lo que permite tener varias cuentas conectadas a la vez sin
+ * que una conteste con el token de otra.
  */
 
 /** Meta valida la URL con un GET antes de dejar guardar la suscripción. */
@@ -101,6 +100,15 @@ function firmaValida(crudo: string, cabecera: string | null): Veredicto {
 
 type PayloadMeta = {
   entry?: {
+    /**
+     * La cuenta de Instagram que ha recibido el evento.
+     *
+     * Es el dato que hace que esto funcione con más de una cuenta conectada.
+     * Sin él, un mensaje se buscaba solo por quién escribe, y con dos cuentas
+     * el mismo identificador podía resolver a la fila de la otra: se habría
+     * contestado con el token que no era.
+     */
+    id?: string;
     changes?: { field?: string }[];
     /** Mensajes entrantes. Vienen en `messaging`, no en `changes`. */
     messaging?: {
@@ -118,13 +126,36 @@ type PayloadMeta = {
  * cambio no hay que casar identificadores de media que Meta nombra de tres
  * formas distintas.
  */
-async function atenderTodosLosImanes(): Promise<void> {
+async function atenderTodosLosImanes(igUserId?: string): Promise<void> {
   try {
+    /**
+     * Solo los imanes de la cuenta que ha recibido el aviso.
+     *
+     * Si no se puede resolver cuál es —un evento de prueba, una cuenta que aún
+     * no ha terminado de autorizar— se atienden todos. Releer de más no manda
+     * nada de más, porque `atenderComentarios` deduplica; no atender es perder
+     * el comentario, que es el fallo caro.
+     */
+    const deLaCuenta = igUserId
+      ? await db
+          .select({ id: accounts.id })
+          .from(accounts)
+          .where(eq(accounts.igUserId, igUserId))
+      : [];
+
     const imanes = await db
       .select({ id: leadMagnets.id })
       .from(leadMagnets)
       .innerJoin(accounts, eq(accounts.id, leadMagnets.accountId))
-      .where(and(eq(leadMagnets.active, true), isNotNull(accounts.metaToken)));
+      .where(
+        and(
+          eq(leadMagnets.active, true),
+          isNotNull(accounts.metaToken),
+          ...(deLaCuenta.length
+            ? [eq(leadMagnets.accountId, deLaCuenta[0].id)]
+            : []),
+        ),
+      );
 
     for (const iman of imanes) {
       const r = await atenderComentarios(iman.id, { ensayo: false });
@@ -151,9 +182,10 @@ async function atenderTodosLosImanes(): Promise<void> {
 async function atenderMensajeEntrante(
   igsid: string,
   texto: string,
+  igUserId?: string,
 ): Promise<void> {
   try {
-    const r = await atenderMensaje(igsid, texto);
+    const r = await atenderMensaje(igsid, texto, igUserId);
     if (r.atendido) {
       await db.insert(runLogs).values({
         workflow: "iman",
@@ -259,7 +291,7 @@ export async function POST(request: Request) {
    */
   const entradas = (payload as PayloadMeta)?.entry ?? [];
 
-  const hayComentario = entradas.some((e) =>
+  const conComentario = entradas.filter((e) =>
     (e.changes ?? []).some((c) => c.field === "comments"),
   );
   /**
@@ -271,7 +303,7 @@ export async function POST(request: Request) {
    * comentario atendido. `after` mantiene viva la invocación después de haber
    * respondido, que es exactamente lo que hace falta aquí.
    */
-  if (hayComentario) after(atenderTodosLosImanes());
+  for (const e of conComentario) after(atenderTodosLosImanes(e.id));
 
   /**
    * Un mensaje entrante es el momento de comprobar si esa persona te sigue.
@@ -288,7 +320,9 @@ export async function POST(request: Request) {
       const de = m.sender?.id;
       const texto = m.message?.text;
       if (!de || !texto || m.message?.is_echo) continue;
-      after(atenderMensajeEntrante(de, texto));
+      // `e.id` es la cuenta que lo recibe: sin eso, con dos cuentas conectadas
+      // el mensaje se podría atender desde la que no es.
+      after(atenderMensajeEntrante(de, texto, e.id));
     }
   }
 

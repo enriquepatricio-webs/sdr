@@ -230,12 +230,27 @@ export async function renovarToken(token: string): Promise<TokenLargo> {
   return { access_token, user_id: "", expires_in };
 }
 
-export type PerfilInstagram = { id: string; username: string };
+/**
+ * Una cuenta de Instagram tiene DOS identificadores, y no son intercambiables.
+ *
+ * `id` es el que ve esta app y cambia de una app a otra. `user_id` es el de la
+ * cuenta profesional, el que empieza por 17841, y es el que Meta pone en
+ * `entry.id` de cada aviso del webhook.
+ *
+ * Guardar el que no es hace que todo parezca bien: se autoriza, se lee, se
+ * envía. Solo falla lo de decidir a qué cuenta pertenece un aviso, que es
+ * justo lo que hace falta cuando hay más de una conectada.
+ */
+export type PerfilInstagram = {
+  id: string;
+  user_id?: string;
+  username: string;
+};
 
 /** Quién es la cuenta que acaba de autorizar. Sirve para saber a cuál guardarla. */
 export async function quienEs(token: string): Promise<PerfilInstagram> {
   const res = await fetch(
-    `${GRAPH}/me?${new URLSearchParams({ fields: "id,username", access_token: token })}`,
+    `${GRAPH}/me?${new URLSearchParams({ fields: "id,user_id,username", access_token: token })}`,
     { cache: "no-store" },
   );
   const texto = await res.text();

@@ -74,12 +74,17 @@ export async function GET(request: Request) {
       });
     }
 
-    let perfil: { id: string; username: string } | null = null;
+    let perfil: { id: string; user_id?: string; username: string } | null = null;
     try {
       perfil = await quienEs(token.access_token);
       await db
         .update(accounts)
-        .set({ igUserId: perfil.id, instagramUsername: perfil.username })
+        .set({
+          // El de la cuenta profesional, que es el que viene en los avisos del
+          // webhook. `id` es el que ve esta app y no aparece en ninguno.
+          igUserId: perfil.user_id ?? perfil.id,
+          instagramUsername: perfil.username,
+        })
         .where(eq(accounts.id, accountId));
     } catch (err) {
       await db.insert(runLogs).values({

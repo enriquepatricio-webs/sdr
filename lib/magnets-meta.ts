@@ -307,13 +307,47 @@ async function asegurarLeadDelIman(
 export async function atenderMensaje(
   igsid: string,
   texto: string,
+  /**
+   * La cuenta de Instagram a la que ha escrito, si el webhook la dice.
+   *
+   * Meta numera a las personas por cuenta de negocio, así que en teoría el
+   * mismo identificador no aparece en dos. En teoría: si alguna vez ocurre, sin
+   * este filtro se cogería la primera fila que salga y se contestaría con el
+   * token de otra cuenta, a alguien que nunca escribió allí. Cuesta una
+   * condición y cierra la puerta.
+   */
+  igUserId?: string,
 ): Promise<{ atendido: boolean; que?: string; detalle?: string }> {
-  const [fila] = await db
-    .select({ contacto: magnetContacts, iman: leadMagnets, cuenta: accounts })
-    .from(magnetContacts)
-    .innerJoin(leadMagnets, eq(leadMagnets.id, magnetContacts.magnetId))
-    .innerJoin(accounts, eq(accounts.id, leadMagnets.accountId))
-    .where(eq(magnetContacts.providerId, igsid));
+  const buscar = (condicion: ReturnType<typeof eq>) =>
+    db
+      .select({ contacto: magnetContacts, iman: leadMagnets, cuenta: accounts })
+      .from(magnetContacts)
+      .innerJoin(leadMagnets, eq(leadMagnets.id, magnetContacts.magnetId))
+      .innerJoin(accounts, eq(accounts.id, leadMagnets.accountId))
+      .where(condicion);
+
+  /**
+   * Primero acotando por la cuenta, y si no sale, sin acotar.
+   *
+   * El filtro por cuenta es lo correcto, pero depende de que el identificador
+   * guardado sea el mismo que manda Meta, y Meta usa dos distintos para la
+   * misma cuenta. Si el guardado es el otro —cuentas autorizadas antes de que
+   * esto se supiera— la consulta acotada no devuelve nada.
+   *
+   * Rendirse ahí sería dejar de contestar sin decir por qué: exactamente el
+   * fallo que más caro sale, porque desde fuera se ve igual que estar apagado.
+   * Así que se reintenta sin el filtro y el sistema sigue funcionando mientras
+   * el identificador se corrige solo en la siguiente autorización.
+   */
+  let [fila] = igUserId
+    ? await buscar(
+        and(
+          eq(magnetContacts.providerId, igsid),
+          eq(accounts.igUserId, igUserId),
+        )!,
+      )
+    : [];
+  if (!fila) [fila] = await buscar(eq(magnetContacts.providerId, igsid));
   if (!fila) return { atendido: false, que: "no es de ningún imán" };
 
   // Si pidió que le dejaran en paz, se para aquí y no recibe nada más.

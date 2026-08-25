@@ -40,3 +40,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Consultas de diagnóstico de una sola vez.
+scripts/tmp/
