@@ -24,6 +24,7 @@ import {
   SIN_MAS_RECORDATORIOS,
   comentariosConLaClave,
   minutosHastaElNudge,
+  normalizarUsuario,
   pideQueLeDejen,
   promptDeEntrega,
 } from "./magnets";
@@ -348,6 +349,49 @@ export async function atenderMensaje(
       )
     : [];
   if (!fila) [fila] = await buscar(eq(magnetContacts.providerId, igsid));
+
+  /**
+   * Y si aún no sale, se le pregunta a Meta quién es y se busca por su nombre.
+   *
+   * De un comentario ajeno Meta no siempre devuelve el `from.id`: lo hace con
+   * cuentas de negocio y con las que tienen un papel en la app, y lo omite con
+   * las demás. El mensaje privado sí les llega igual, porque va anclado al
+   * comentario y no necesita saber su identificador — pero el contacto se
+   * guarda sin él.
+   *
+   * Eso significa que la única persona de fuera que ha usado el imán entraría
+   * en la conversación y no la reconoceríamos: escribe, y silencio. Justo lo
+   * que no puede pasar. Cuando escribe SÍ se puede leer su perfil, así que se
+   * la encuentra por su nombre de usuario y se le graba el identificador, que
+   * a partir de ahí ya no vuelve a hacer falta.
+   */
+  if (!fila && igUserId) {
+    const [dueña] = await db
+      .select({ id: accounts.id })
+      .from(accounts)
+      .where(eq(accounts.igUserId, igUserId));
+    const viva = dueña ? await tokenDeCuenta(dueña.id) : null;
+    if (viva) {
+      const quien = await perfilDeQuienEscribe(viva.token, igsid).catch(
+        () => null,
+      );
+      if (quien?.username) {
+        [fila] = await buscar(
+          and(
+            eq(magnetContacts.username, normalizarUsuario(quien.username)),
+            eq(accounts.id, dueña!.id),
+          )!,
+        );
+        if (fila) {
+          await db
+            .update(magnetContacts)
+            .set({ providerId: igsid })
+            .where(eq(magnetContacts.id, fila.contacto.id));
+        }
+      }
+    }
+  }
+
   if (!fila) return { atendido: false, que: "no es de ningún imán" };
 
   // Si pidió que le dejaran en paz, se para aquí y no recibe nada más.

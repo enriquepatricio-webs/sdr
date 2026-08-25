@@ -109,7 +109,7 @@ type PayloadMeta = {
      * contestado con el token que no era.
      */
     id?: string;
-    changes?: { field?: string }[];
+    changes?: { field?: string; value?: { from?: { id?: string } } }[];
     /** Mensajes entrantes. Vienen en `messaging`, no en `changes`. */
     messaging?: {
       sender?: { id?: string };
@@ -291,8 +291,18 @@ export async function POST(request: Request) {
    */
   const entradas = (payload as PayloadMeta)?.entry ?? [];
 
+  /**
+   * Los comentarios que hemos escrito nosotros no cuentan.
+   *
+   * Cuando el imán contesta en público —"¡Va por privado!"— ese comentario
+   * vuelve por el webhook como un evento más, con `from.id` igual a la cuenta
+   * que lo recibe. Sin descartarlo, cada respuesta nuestra relanza el ciclo
+   * entero del imán: trabajo por duplicado y una llamada a Meta de regalo.
+   */
   const conComentario = entradas.filter((e) =>
-    (e.changes ?? []).some((c) => c.field === "comments"),
+    (e.changes ?? []).some(
+      (c) => c.field === "comments" && c.value?.from?.id !== e.id,
+    ),
   );
   /**
    * `after` y no `void`.
@@ -319,7 +329,15 @@ export async function POST(request: Request) {
     for (const m of e.messaging ?? []) {
       const de = m.sender?.id;
       const texto = m.message?.text;
-      if (!de || !texto || m.message?.is_echo) continue;
+      /**
+       * `is_echo` no es la única forma de reconocer lo nuestro.
+       *
+       * Meta lo marca casi siempre, pero cuando no lo hace el mensaje entra
+       * como si lo hubiera escrito un desconocido y el imán se contesta a sí
+       * mismo. Que el remitente sea la propia cuenta lo dice igual de claro y
+       * no depende de que venga la marca.
+       */
+      if (!de || !texto || m.message?.is_echo || de === e.id) continue;
       // `e.id` es la cuenta que lo recibe: sin eso, con dos cuentas conectadas
       // el mensaje se podría atender desde la que no es.
       after(atenderMensajeEntrante(de, texto, e.id));

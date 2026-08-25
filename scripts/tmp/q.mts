@@ -1,12 +1,6 @@
 import { neon } from '@neondatabase/serverless'
 const sql = neon(process.env.DATABASE_URL!)
-console.log('### la consulta acotada por cuenta, tal cual la hace el código')
-for (const c of await sql`select provider_id, username from magnet_contacts where provider_id is not null`) {
-  const [fila] = await sql`
-    select mc.username, a.display_name, a.ig_user_id
-    from magnet_contacts mc
-    join lead_magnets m on m.id=mc.magnet_id
-    join accounts a on a.id=m.account_id
-    where mc.provider_id=${c.provider_id} and a.ig_user_id='17841436619898247'`
-  console.log(`  @${c.username} -> ${fila ? 'CASA con ' + fila.display_name : 'NO CASA'}`)
-}
+for (const r of await sql`select workflow, level, message, payload, created_at from run_logs
+  where created_at between '2026-08-25T13:25:00Z' and '2026-08-25T13:45:00Z' order by created_at`)
+  console.log(`${new Date(r.created_at as any).toISOString()} [${r.level}] ${r.workflow}: ${r.message}`.slice(0,180),
+    r.payload ? '\n   ' + JSON.stringify(r.payload).slice(0,400) : '')
