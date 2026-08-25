@@ -117,7 +117,7 @@
       ],
       "parameters": {
         "promptType": "define",
-        "text": "=Escribe un SEGUIMIENTO. El prospecto no ha contestado al mensaje anterior.\n\nNombre: {{ $('Lead a lead').item.json.fullName }}\nEmpresa: {{ $('Lead a lead').item.json.company || '-' }}\nToques ya enviados: {{ $('Lead a lead').item.json.touchCount }}\n\nLo que ya le has escrito:\n{{ ($('Hilo previo').item.json.hilo || []).map(m => m.quien + ': ' + m.texto).join(' | ') || '(sin historial)' }}\n\nNO repitas el mensaje anterior con otras palabras: cambia de ángulo, aporta algo nuevo y corto, y cierra con una pregunta distinta. Máximo 3 líneas. Devuelve SOLO el texto del mensaje.",
+        "text": "=Escribe el SIGUIENTE mensaje de esta conversación.\n\nNombre: {{ $('Lead a lead').item.json.fullName }}\nEmpresa: {{ $('Lead a lead').item.json.company || '-' }}\nDe dónde sale: {{ $('Lead a lead').item.json.headline || 'prospección en frío' }}\nMensajes ya enviados: {{ $('Lead a lead').item.json.touchCount }}\n\nLo que ya os habéis dicho:\n{{ ($('Hilo previo').item.json.hilo || []).map(m => m.quien + ': ' + m.texto).join(' | ') || '(nada todavía)' }}\n\nSI YA HABÉIS HABLADO: continúa donde se quedó. No te presentes otra vez, no digas que no os conocéis y no vuelvas a explicar a qué te dedicas. Si acaba de recibir algo tuyo, interesate por qué tal le ha ido con ello.\n\nSI NO HABÉIS HABLADO: es un seguimiento a alguien que no contestó. No repitas el mensaje anterior con otras palabras: cambia de ángulo, aporta algo nuevo y corto, y cierra con una pregunta distinta.\n\nMáximo 3 líneas. Devuelve SOLO el texto del mensaje.",
         "options": {
           "systemMessage": "={{ $('Playbook activo').item.json.systemPrompt }}",
           "maxIterations": 3
@@ -318,5 +318,6 @@
   "settings": {
     "executionOrder": "v1",
     "availableInMCP": true
-  }
+  },
+  "description": "Cada 15 minutos: coge los seguimientos vencidos que autorice la API, carga el hilo previo para no repetirse y redacta el siguiente mensaje. Envía o deja borrador según el autopiloto. El ritmo real lo marca next_action_at de cada lead, no este cron."
 }

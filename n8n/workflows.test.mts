@@ -199,7 +199,28 @@ prueba('W3 le pasa el hilo previo al agente para que no se repita', () => {
   const texto = JSON.stringify(workflows['sdr-followup'])
   assert.ok(texto.includes('/api/leads/resolve'), 'W3 no carga el historial')
   assert.ok(texto.includes('mode=seguimiento'), 'W3 no pide seguimientos')
-  assert.ok(texto.includes('NO repitas'), 'no se le dice al agente que no se repita')
+  assert.match(texto, /no repitas/i, 'no se le dice al agente que no se repita')
+})
+
+/**
+ * Un lead que viene de un imán YA ha hablado contigo.
+ *
+ * El prompt afirmaba siempre "el prospecto no ha contestado", y con esa premisa
+ * el modelo escribía un primer contacto en frío —"no nos conocemos de nada"— a
+ * alguien que acababa de pedir un recurso y de recibirlo. Nada delata más
+ * rápido que detrás no hay una persona.
+ */
+prueba('W3 no se presenta a quien ya ha hablado contigo', () => {
+  const texto = JSON.stringify(workflows['sdr-followup'])
+  assert.match(texto, /no te presentes otra vez/i, 'puede volver a presentarse')
+  assert.ok(
+    texto.includes('headline'),
+    'W3 no le dice al agente de dónde sale el lead',
+  )
+  assert.ok(
+    !texto.includes('El prospecto no ha contestado al mensaje anterior'),
+    'W3 sigue dando por hecho que el prospecto no ha contestado',
+  )
 })
 
 prueba('W1 lee el perfil del prospecto ANTES de redactarle', () => {

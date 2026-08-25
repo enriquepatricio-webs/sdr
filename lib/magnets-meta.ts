@@ -6,6 +6,7 @@ import {
   leads,
   magnetContacts,
   runLogs,
+  touches,
 } from "./db/schema";
 import { desautorizar, tokenDeCuenta } from "./instagram-cuenta";
 import {
@@ -560,6 +561,49 @@ export async function atenderMensaje(
   const leadId = await asegurarLeadDelIman(fila.iman, fila.contacto, igsid, {
     username: perfil.username ?? fila.contacto.username,
   });
+
+  /**
+   * Y la conversación se guarda como toques del lead.
+   *
+   * `touches` es de donde lee TODO el sistema para saber qué se ha hablado ya:
+   * el agente entrante, el seguimiento, el panel. El imán mandaba sus mensajes
+   * por su cuenta y no dejaba ninguna fila ahí, así que cuando el agente cogía
+   * la conversación veía un historial vacío y escribía un primer contacto en
+   * frío —"no nos conocemos de nada"— a alguien que acababa de pedirle algo y
+   * de recibirlo. Nada delata más rápido que detrás no hay una persona.
+   *
+   * Se guardan los dos lados: lo que escribió y lo que le mandamos.
+   */
+  if (leadId) {
+    const ahora = new Date();
+    await db.insert(touches).values([
+      {
+        leadId,
+        accountId: fila.cuenta.id,
+        channel: "instagram" as const,
+        direction: "in" as const,
+        status: "enviado" as const,
+        step: 1,
+        body: texto,
+        sentAt: ahora,
+      },
+      {
+        leadId,
+        accountId: fila.cuenta.id,
+        channel: "instagram" as const,
+        direction: "out" as const,
+        status: "enviado" as const,
+        step: 1,
+        body: mensaje,
+        sentAt: ahora,
+      },
+    ]);
+    // El siguiente mensaje del agente es el segundo, no el primero.
+    await db
+      .update(leads)
+      .set({ touchCount: 1 })
+      .where(eq(leads.id, leadId));
+  }
 
   await db
     .update(magnetContacts)
