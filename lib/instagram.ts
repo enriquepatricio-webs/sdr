@@ -136,6 +136,45 @@ export async function canjearCodigo(
   return { access_token, user_id: String(userId), expires_in };
 }
 
+/**
+ * Cuánto antes de caducar se renueva.
+ *
+ * Meta da 60 días y deja renovar cuantas veces haga falta, así que el token es
+ * eterno mientras alguien lo renueve. Diez días de margen dan de sobra para que
+ * una semana sin actividad —vacaciones, un puente— no mate la conexión.
+ */
+export const DIAS_PARA_RENOVAR = 10;
+
+/**
+ * Otros 60 días.
+ *
+ * Meta exige que el token tenga al menos 24 horas de vida para poder renovarlo,
+ * así que renovar en cada uso sería tirar llamadas: solo se hace cuando queda
+ * poco.
+ */
+export async function renovarToken(token: string): Promise<TokenLargo> {
+  const res = await fetch(
+    `${GRAPH}/refresh_access_token?${new URLSearchParams({
+      grant_type: "ig_refresh_token",
+      access_token: token,
+    })}`,
+    { cache: "no-store" },
+  );
+  const texto = await res.text();
+  if (!res.ok) {
+    throw new InstagramError(
+      `No se pudo renovar el token: ${res.status} ${texto.slice(0, 300)}`,
+      res.status,
+      texto,
+    );
+  }
+  const { access_token, expires_in } = JSON.parse(texto) as {
+    access_token: string;
+    expires_in: number;
+  };
+  return { access_token, user_id: "", expires_in };
+}
+
 export type PerfilInstagram = { id: string; username: string };
 
 /** Quién es la cuenta que acaba de autorizar. Sirve para saber a cuál guardarla. */
