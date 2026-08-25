@@ -17,27 +17,14 @@ export const dynamic = "force-dynamic";
  * No devuelve el token, solo qué contesta cada sitio.
  */
 const PRUEBAS = (id: string) => [
-  // Instagram Login usa `user_id`, no `id`: si el campo no existe el error es
-  // el mismo que si la ruta estuviera mal, asi que hay que probarlo aparte.
   {
-    que: "/me user_id,username",
+    que: "perfil",
     url: `https://graph.instagram.com/me?fields=user_id,username`,
   },
-  { que: "/me sin fields", url: `https://graph.instagram.com/me?` },
   {
-    que: "/me account_type",
-    url: `https://graph.instagram.com/me?fields=account_type`,
+    que: "publicaciones",
+    url: `https://graph.instagram.com/me/media?fields=id,permalink,media_type,timestamp&limit=25`,
   },
-  {
-    que: "v23 /me user_id",
-    url: `https://graph.instagram.com/v23.0/me?fields=user_id,username`,
-  },
-  { que: "/me/media", url: `https://graph.instagram.com/me/media?fields=id` },
-  {
-    que: "por id, user_id",
-    url: `https://graph.instagram.com/${id}?fields=user_id,username`,
-  },
-  { que: "por id, sin fields", url: `https://graph.instagram.com/${id}?` },
 ];
 
 export async function GET() {
@@ -69,7 +56,7 @@ export async function GET() {
       resultados.push({
         que: p.que,
         estado: res.status,
-        respuesta: texto.slice(0, 220),
+        respuesta: texto.slice(0, 1800),
       });
     }
 
