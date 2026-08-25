@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { and, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { accounts, leadMagnets, runLogs } from "@/lib/db/schema";
@@ -262,7 +262,16 @@ export async function POST(request: Request) {
   const hayComentario = entradas.some((e) =>
     (e.changes ?? []).some((c) => c.field === "comments"),
   );
-  if (hayComentario) void atenderTodosLosImanes();
+  /**
+   * `after` y no `void`.
+   *
+   * Lanzar el trabajo sin esperarlo parecía lo correcto —Meta reintenta lo que
+   * tarda en contestar— pero en Vercel la función se congela en cuanto responde
+   * y la tarea muere a medias: cada evento dejaba un "Failed query" y ningún
+   * comentario atendido. `after` mantiene viva la invocación después de haber
+   * respondido, que es exactamente lo que hace falta aquí.
+   */
+  if (hayComentario) after(atenderTodosLosImanes());
 
   /**
    * Un mensaje entrante es el momento de comprobar si esa persona te sigue.
@@ -279,7 +288,7 @@ export async function POST(request: Request) {
       const de = m.sender?.id;
       const texto = m.message?.text;
       if (!de || !texto || m.message?.is_echo) continue;
-      void atenderMensajeEntrante(de, texto);
+      after(atenderMensajeEntrante(de, texto));
     }
   }
 
