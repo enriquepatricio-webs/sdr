@@ -139,15 +139,31 @@ export async function atenderComentarios(
 
   const hechos: Record<string, unknown>[] = [];
   for (const c of nuevos.slice(0, maximo)) {
+    const quienEsId = idDe.get(c.commentId!) ?? null;
+
     /**
-     * Al comentario se le pide el follow, no se le entrega el recurso.
+     * Lo primero es mirar si ya te sigue. Antes de pedirle nada.
      *
-     * Comprobar si te sigue exige que esa persona te haya ESCRITO antes: hasta
-     * entonces Meta responde 230 "User consent is required". Su respuesta a
-     * este mensaje es lo que abre la puerta a poder comprobarlo.
+     * Estaba al revés: se pedía el follow a todo el mundo y se comprobaba
+     * después, cuando contestaban. La razón que se daba era que Meta responde
+     * 230 "User consent is required" hasta que esa persona te escribe.
      *
-     * El texto es el que escribió la persona en el imán, sin tocarlo: es su
-     * condición y no le corresponde reformularla a un modelo.
+     * Es falso, y se comprobó llamando: con el identificador que viene EN EL
+     * COMENTARIO, Meta contesta 200 y dice si te sigue. El 230 salía de usar
+     * identificadores viejos de la época de Unipile, que ya no existen.
+     *
+     * La diferencia se nota: a quien ya te sigue se le pedía que te siguiera.
+     * Nada delata más rápido que detrás no hay nadie mirando.
+     */
+    const yaSigue = quienEsId
+      ? await perfilDeQuienEscribe(cuenta.token, quienEsId)
+          .then((p) => p.is_user_follow_business === true)
+          .catch(() => false)
+      : false;
+
+    /**
+     * El texto del follow es el que escribió la persona en el imán, sin tocarlo:
+     * es su condición y no le corresponde reformularla a un modelo.
      */
     const texto = fila.iman.followMessage;
 
@@ -160,8 +176,9 @@ export async function atenderComentarios(
       hechos.push({
         usuario: c.username,
         comentario: textoDe.get(c.commentId!),
+        yaSigue,
         publico,
-        privado: texto,
+        privado: yaSigue ? "(el recurso, ya te sigue)" : texto,
       });
       continue;
     }
@@ -171,27 +188,61 @@ export async function atenderComentarios(
       c.commentId!,
       publico,
     );
+
+    const [contacto] = await db
+      .insert(magnetContacts)
+      .values({
+        magnetId: fila.iman.id,
+        username: c.username,
+        fullName: c.fullName,
+        commentId: c.commentId,
+        // El id con el que Meta le llama. Es la única forma de casar su
+        // respuesta con este contacto, y con el que se mira si te sigue.
+        providerId: quienEsId,
+        state: yaSigue ? "verificado" : "pidiendo_follow",
+        followAsks: yaSigue ? 0 : 1,
+        verifiedAt: yaSigue ? new Date() : null,
+      })
+      .returning();
+
+    if (yaSigue) {
+      /**
+       * Ya te sigue: se le manda el recurso directamente.
+       *
+       * Va anclado a su comentario y no por el hilo, porque puede no haberte
+       * escrito nunca y entonces no hay conversación abierta por la que
+       * mandarle nada. Meta acepta ese privado durante siete días.
+       */
+      const entrega = await entregarRecurso({
+        iman: fila.iman,
+        cuentaId: fila.cuenta.id,
+        token: cuenta.token,
+        igUserId: cuenta.igUserId,
+        contacto,
+        igsid: quienEsId,
+        username: c.username,
+        dijo: textoDe.get(c.commentId!) ?? fila.iman.keyword,
+        via: { comentario: c.commentId! },
+      });
+      hechos.push({
+        usuario: c.username,
+        respuestaPublica: respuesta.id,
+        yaSigue: true,
+        entregado: entrega.mensaje.slice(0, 120),
+      });
+      continue;
+    }
+
     const dm = await mensajePrivadoAlComentario(
       cuenta.token,
       cuenta.igUserId,
       c.commentId!,
       texto,
     );
-
-    await db.insert(magnetContacts).values({
-      magnetId: fila.iman.id,
-      username: c.username,
-      fullName: c.fullName,
-      commentId: c.commentId,
-      // El id con el que Meta le llama al escribir. Es la única forma de casar
-      // su respuesta con este contacto.
-      providerId: idDe.get(c.commentId!) ?? null,
-      state: "pidiendo_follow",
-      followAsks: 1,
-    });
     hechos.push({
       usuario: c.username,
       respuestaPublica: respuesta.id,
+      yaSigue: false,
       mensajePrivado: dm.message_id ?? "enviado",
     });
   }
@@ -488,10 +539,56 @@ export async function atenderMensaje(
     return { atendido: true, que: "no sigue: se le ha recordado" };
   }
 
-  // Sí sigue: se le entrega, y el mensaje lo escribe el agente.
-  const ajustes = await ajustesEfectivos(fila.iman.workspaceId);
-  const systemPrompt = await promptDeCampana(await campanaDelImanId(fila.iman));
-  let mensaje = fila.iman.resource;
+  // Sí sigue: se le entrega.
+  const entrega = await entregarRecurso({
+    iman: fila.iman,
+    cuentaId: fila.cuenta.id,
+    token: cuenta.token,
+    igUserId: cuenta.igUserId,
+    contacto: fila.contacto,
+    igsid,
+    username: perfil.username ?? fila.contacto.username,
+    dijo: texto,
+    via: { hilo: true },
+  });
+
+  return {
+    atendido: true,
+    que: "sigue: recurso entregado",
+    detalle: entrega.mensaje,
+  };
+}
+
+/**
+ * Componer el recurso y entregarlo. El único sitio donde se entrega.
+ *
+ * Hay dos formas de llegar aquí: alguien que comenta la palabra y resulta que
+ * ya te sigue, y alguien a quien se le pidió el follow y contesta. El mensaje,
+ * el lead, los toques y el filtro de precios tienen que ser idénticos en los
+ * dos casos, y la única manera de garantizarlo es que haya un solo camino.
+ *
+ * Lo único que cambia es POR DÓNDE sale, y no es un detalle: a quien nunca te
+ * ha escrito no se le puede mandar un privado normal —no hay conversación
+ * abierta—, pero sí uno anclado a su comentario, que Meta acepta durante siete
+ * días. Es exactamente lo que permite contestar al instante a un desconocido.
+ */
+async function entregarRecurso(opciones: {
+  iman: typeof leadMagnets.$inferSelect;
+  cuentaId: string;
+  token: string;
+  igUserId: string;
+  contacto: typeof magnetContacts.$inferSelect;
+  igsid: string | null;
+  username: string;
+  /** Lo que dijo esa persona: su comentario o su mensaje. */
+  dijo: string;
+  via: { comentario: string } | { hilo: true };
+}): Promise<{ mensaje: string }> {
+  const { iman, contacto, username } = opciones;
+
+  const ajustes = await ajustesEfectivos(iman.workspaceId);
+  const systemPrompt = await promptDeCampana(await campanaDelImanId(iman));
+  let mensaje = iman.resource;
   try {
     const r = await chat({
       model: ajustes.openrouterModel,
@@ -504,10 +601,10 @@ export async function atenderMensaje(
         {
           role: "user" as const,
           content: promptDeEntrega({
-            nombre: perfil.username ?? fila.contacto.username,
-            clave: fila.iman.keyword,
-            recurso: fila.iman.resource,
-            comentario: texto,
+            nombre: username,
+            clave: iman.keyword,
+            recurso: iman.resource,
+            comentario: opciones.dijo,
           }),
         },
       ],
@@ -518,10 +615,10 @@ export async function atenderMensaje(
   }
 
   // El mismo filtro que el resto del sistema: ninguna cifra de dinero por chat.
-  if (mencionaDinero(mensaje)) mensaje = fila.iman.resource;
+  if (mencionaDinero(mensaje)) mensaje = iman.resource;
   // Y el recurso tiene que ir sí o sí: es lo único que se ha prometido.
-  if (!mensaje.includes(fila.iman.resource)) {
-    mensaje = `${mensaje}\n\n${fila.iman.resource}`;
+  if (!mensaje.includes(iman.resource)) {
+    mensaje = `${mensaje}\n\n${iman.resource}`;
   }
 
   /**
@@ -531,18 +628,27 @@ export async function atenderMensaje(
    * indistinguible desde aquí de una que sí llegó. Sin el texto delante no hay
    * forma de saber si el problema fue el envío o lo que se compuso.
    */
-  const envio = await mensajeDirecto(
-    cuenta.token,
-    cuenta.igUserId,
-    igsid,
-    mensaje,
-  );
+  const envio =
+    "comentario" in opciones.via
+      ? await mensajePrivadoAlComentario(
+          opciones.token,
+          opciones.igUserId,
+          opciones.via.comentario,
+          mensaje,
+        )
+      : await mensajeDirecto(
+          opciones.token,
+          opciones.igUserId,
+          opciones.igsid!,
+          mensaje,
+        );
   await db.insert(runLogs).values({
     workflow: "iman",
     level: "info",
-    message: `Recurso enviado a @${perfil.username ?? fila.contacto.username}`,
+    message: `Recurso enviado a @${username}`,
     payload: {
-      igsid,
+      igsid: opciones.igsid,
+      via: "comentario" in opciones.via ? "comentario" : "hilo",
       messageId: envio.message_id ?? null,
       largo: mensaje.length,
       texto: mensaje.slice(0, 500),
@@ -552,15 +658,15 @@ export async function atenderMensaje(
   /**
    * A partir de aquí es un lead, no un contacto de un imán.
    *
-   * El imán ha cumplido: pidió, comprobó y entregó. Lo que venga después —qué
-   * tal le ha ido, si encaja, cerrar una reunión— es trabajo del agente, y el
-   * agente solo sabe hablar de leads. Sin esta fila, la conversación se acaba
-   * justo en el mejor momento: cuando esa persona acaba de recibir algo tuyo y
-   * está mirando el móvil.
+   * El imán ha cumplido: comprobó y entregó. Lo que venga después —qué tal le
+   * ha ido, si encaja, cerrar una reunión— es trabajo del agente, y el agente
+   * solo sabe hablar de leads. Sin esta fila, la conversación se acaba justo en
+   * el mejor momento: cuando esa persona acaba de recibir algo tuyo y está
+   * mirando el móvil.
    */
-  const leadId = await asegurarLeadDelIman(fila.iman, fila.contacto, igsid, {
-    username: perfil.username ?? fila.contacto.username,
-  });
+  const leadId = opciones.igsid
+    ? await asegurarLeadDelIman(iman, contacto, opciones.igsid, { username })
+    : null;
 
   /**
    * Y la conversación se guarda como toques del lead.
@@ -572,24 +678,24 @@ export async function atenderMensaje(
    * frío —"no nos conocemos de nada"— a alguien que acababa de pedirle algo y
    * de recibirlo. Nada delata más rápido que detrás no hay una persona.
    *
-   * Se guardan los dos lados: lo que escribió y lo que le mandamos.
+   * Se guardan los dos lados: lo que dijo y lo que le mandamos.
    */
   if (leadId) {
     const ahora = new Date();
     await db.insert(touches).values([
       {
         leadId,
-        accountId: fila.cuenta.id,
+        accountId: opciones.cuentaId,
         channel: "instagram" as const,
         direction: "in" as const,
         status: "enviado" as const,
         step: 1,
-        body: texto,
+        body: opciones.dijo,
         sentAt: ahora,
       },
       {
         leadId,
-        accountId: fila.cuenta.id,
+        accountId: opciones.cuentaId,
         channel: "instagram" as const,
         direction: "out" as const,
         status: "enviado" as const,
@@ -599,10 +705,7 @@ export async function atenderMensaje(
       },
     ]);
     // El siguiente mensaje del agente es el segundo, no el primero.
-    await db
-      .update(leads)
-      .set({ touchCount: 1 })
-      .where(eq(leads.id, leadId));
+    await db.update(leads).set({ touchCount: 1 }).where(eq(leads.id, leadId));
   }
 
   await db
@@ -613,14 +716,14 @@ export async function atenderMensaje(
       deliveredAt: new Date(),
       leadId,
     })
-    .where(eq(magnetContacts.id, fila.contacto.id));
+    .where(eq(magnetContacts.id, contacto.id));
 
   await db.insert(runLogs).values({
     workflow: "iman",
     level: "info",
-    message: `@${perfil.username ?? fila.contacto.username} sigue a la cuenta: recurso entregado.`,
-    payload: { magnetId: fila.iman.id, contactId: fila.contacto.id },
+    message: `@${username} sigue a la cuenta: recurso entregado.`,
+    payload: { magnetId: iman.id, contactId: contacto.id },
   });
 
-  return { atendido: true, que: "sigue: recurso entregado", detalle: mensaje };
+  return { mensaje };
 }
