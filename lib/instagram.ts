@@ -35,6 +35,22 @@ export const PERMISOS = [
   "instagram_business_manage_messages",
 ].join(",");
 
+/**
+ * Meta ha invalidado la sesión: hay que volver a autorizar.
+ *
+ * Pasa sin avisar —cambiar la contraseña, tocar un permiso, una revisión de
+ * seguridad de Meta— y el token sigue teniendo fecha de caducidad futura, así
+ * que el panel lo pinta como sano mientras nada funciona. Distinguirlo es lo
+ * que permite decir "vuelve a autorizar" en vez de dejar un error críptico.
+ */
+export function sesionInvalidada(err: unknown): boolean {
+  return (
+    err instanceof InstagramError &&
+    (err.body.includes('"code":190') ||
+      err.body.includes("session has been invalidated"))
+  );
+}
+
 export class InstagramError extends Error {
   constructor(
     message: string,

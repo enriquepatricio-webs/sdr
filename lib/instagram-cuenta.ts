@@ -23,6 +23,30 @@ export type CuentaInstagram = {
  * el envío por no haber podido renovar sería cambiar un problema de dentro de
  * diez días por uno de ahora mismo.
  */
+/**
+ * Da la cuenta por desautorizada.
+ *
+ * Se borra el token en vez de marcar una bandera: así el panel enseña "sin
+ * autorizar" y su botón, que es exactamente lo que hay que hacer. Una cuenta
+ * con un token muerto y fecha de caducidad futura se pinta como sana mientras
+ * nada funciona.
+ */
+export async function desautorizar(
+  accountId: string,
+  motivo: string,
+): Promise<void> {
+  await db
+    .update(accounts)
+    .set({ metaToken: null, metaTokenExpiresAt: null })
+    .where(eq(accounts.id, accountId));
+  await db.insert(runLogs).values({
+    workflow: "instagram",
+    level: "error",
+    message: `Instagram invalidó la sesión de la cuenta: hay que volver a autorizarla. ${motivo}`,
+    payload: { accountId },
+  });
+}
+
 export async function tokenDeCuenta(
   accountId: string,
 ): Promise<CuentaInstagram | null> {

@@ -7,7 +7,7 @@ import {
   magnetContacts,
   runLogs,
 } from "./db/schema";
-import { tokenDeCuenta } from "./instagram-cuenta";
+import { desautorizar, tokenDeCuenta } from "./instagram-cuenta";
 import {
   comentariosDeMedia,
   mediaDeUrl,
@@ -15,6 +15,7 @@ import {
   mensajePrivadoAlComentario,
   perfilDeQuienEscribe,
   responderComentario,
+  sesionInvalidada,
 } from "./instagram";
 import {
   MAX_PETICIONES_DE_FOLLOW,
@@ -79,7 +80,19 @@ export async function atenderComentarios(
     };
   }
 
-  const mediaId = await mediaDeUrl(cuenta.token, fila.iman.postUrl);
+  let mediaId: string | null;
+  try {
+    mediaId = await mediaDeUrl(cuenta.token, fila.iman.postUrl);
+  } catch (err) {
+    if (sesionInvalidada(err)) {
+      await desautorizar(fila.cuenta.id, `Imán "${fila.iman.name}".`);
+      return {
+        ...vacio,
+        error: `Instagram invalidó la sesión de @${cuenta.username}. Vuelve a autorizarla en /empresa.`,
+      };
+    }
+    throw err;
+  }
   if (!mediaId) {
     return {
       ...vacio,
