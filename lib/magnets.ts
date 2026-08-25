@@ -243,5 +243,43 @@ export const PASO_RECORDATORIO = 4;
  * Callarse es lo que hacía antes, y desde el otro lado es indistinguible de un
  * bot roto: la persona contesta, no pasa nada, y se va.
  */
+/**
+ * El mensaje con el que se entrega el recurso.
+ *
+ * Lo escribe el agente y no una plantilla, porque el mismo texto palabra por
+ * palabra a todo el que comenta es lo primero que delata a un bot. El recurso
+ * va tal cual lo puso la persona: eso NO lo reescribe nadie.
+ */
+export function promptDeEntrega(opciones: {
+  nombre: string;
+  clave: string;
+  recurso: string;
+  comentario: string;
+}): string {
+  return [
+    `${opciones.nombre} acaba de comentar "${opciones.comentario}" en una publicación nuestra, pidiendo el recurso con la palabra "${opciones.clave}".`,
+    "",
+    "Escríbele por privado entregándoselo. Dos líneas como mucho, en el tono de un mensaje de Instagram: le has visto el comentario y se lo mandas.",
+    "",
+    `El recurso es esto y va TAL CUAL, sin cambiar ni una letra ni añadirle nada alrededor: ${opciones.recurso}`,
+    "",
+    "Nada de presentarte, nada de «espero que te sirva», nada de pedir nada a cambio. Y cierra con UNA pregunta corta y fácil que invite a contestar, para que la conversación pueda seguir.",
+    "",
+    "Devuelve SOLO el texto del mensaje.",
+  ].join("\n");
+}
+
+/**
+ * Lo que se contesta en público, colgando del comentario.
+ *
+ * Corto a propósito: lo lee todo el que pase por el post, y su único trabajo es
+ * que se vea que se ha atendido. La conversación de verdad va por privado.
+ */
+export const RESPUESTA_PUBLICA = [
+  "¡Va por privado! 📩",
+  "Te lo acabo de mandar por privado 📩",
+  "Enviado por privado 📩",
+];
+
 export const RECORDATORIO_FOLLOW =
   "Gracias, pero todavía no me sale que me sigas. Dale a seguir y te lo mando al momento; si ya le has dado, dame un minuto y vuelve a escribirme.";
