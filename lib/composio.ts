@@ -269,7 +269,11 @@ export async function consultarDisponibilidad(
       timezone: reglas.timezone,
       items: [{ id: opciones.calendarId ?? "primary" }],
     },
-    opciones,
+    {
+      ...opciones,
+      connectedAccountId:
+        opciones.connectedAccountId ?? (await cuentaDeCalendario()),
+    },
   );
 
   return calcularHuecos(extraerOcupado(data), reglas, ahora);
@@ -313,7 +317,11 @@ export async function agendarReunion(
       send_updates: true,
       ...(datos.emailInvitado ? { attendees: [datos.emailInvitado] } : {}),
     },
-    opciones,
+    {
+      ...opciones,
+      connectedAccountId:
+        opciones.connectedAccountId ?? (await cuentaDeCalendario()),
+    },
   );
 
   return { ...data, meetUrl: data.hangoutLink ?? data.meetUrl };
