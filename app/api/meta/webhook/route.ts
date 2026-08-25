@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { and, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { accounts, leadMagnets, runLogs } from "@/lib/db/schema";
-import { atenderComentarios } from "@/lib/magnets-meta";
+import { atenderComentarios, atenderMensaje } from "@/lib/magnets-meta";
 
 export const dynamic = "force-dynamic";
 
@@ -99,7 +99,16 @@ function firmaValida(crudo: string, cabecera: string | null): Veredicto {
   };
 }
 
-type PayloadMeta = { entry?: { changes?: { field?: string }[] }[] };
+type PayloadMeta = {
+  entry?: {
+    changes?: { field?: string }[];
+    /** Mensajes entrantes. Vienen en `messaging`, no en `changes`. */
+    messaging?: {
+      sender?: { id?: string };
+      message?: { text?: string; is_echo?: boolean };
+    }[];
+  }[];
+};
 
 /**
  * Atiende los imanes encendidos de las cuentas autorizadas.
@@ -135,6 +144,32 @@ async function atenderTodosLosImanes(): Promise<void> {
       message: `Falló atender un comentario entrante: ${
         err instanceof Error ? err.message : String(err)
       }`,
+    });
+  }
+}
+
+async function atenderMensajeEntrante(
+  igsid: string,
+  texto: string,
+): Promise<void> {
+  try {
+    const r = await atenderMensaje(igsid, texto);
+    if (r.atendido) {
+      await db.insert(runLogs).values({
+        workflow: "iman",
+        level: "info",
+        message: `Mensaje de un contacto del imán: ${r.que}`,
+        payload: { igsid },
+      });
+    }
+  } catch (err) {
+    await db.insert(runLogs).values({
+      workflow: "iman",
+      level: "error",
+      message: `Falló atender un mensaje entrante: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      payload: { igsid },
     });
   }
 }
@@ -222,12 +257,30 @@ export async function POST(request: Request) {
    * porque Meta reintenta lo que no conteste 200 deprisa, y un reintento
    * mientras aún estamos escribiendo sería el mismo DM dos veces.
    */
-  const cambios = (payload as PayloadMeta)?.entry ?? [];
-  const hayComentario = cambios.some((e) =>
+  const entradas = (payload as PayloadMeta)?.entry ?? [];
+
+  const hayComentario = entradas.some((e) =>
     (e.changes ?? []).some((c) => c.field === "comments"),
   );
-  if (hayComentario) {
-    void atenderTodosLosImanes();
+  if (hayComentario) void atenderTodosLosImanes();
+
+  /**
+   * Un mensaje entrante es el momento de comprobar si esa persona te sigue.
+   *
+   * Antes no se puede: hasta que no te escribe, Meta responde "User consent is
+   * required to access user profile". Su mensaje ES el consentimiento, así que
+   * el embudo pide el follow por privado y comprueba cuando contestan.
+   *
+   * Los ecos —lo que escribimos nosotros— se descartan aquí: sin esto el imán
+   * se contestaría a sí mismo en bucle.
+   */
+  for (const e of entradas) {
+    for (const m of e.messaging ?? []) {
+      const de = m.sender?.id;
+      const texto = m.message?.text;
+      if (!de || !texto || m.message?.is_echo) continue;
+      void atenderMensajeEntrante(de, texto);
+    }
   }
 
   // Meta reintenta lo que no conteste 200 rápido, así que se responde antes de

@@ -5,12 +5,17 @@ import { tokenDeCuenta } from "./instagram-cuenta";
 import {
   comentariosDeMedia,
   mediaDeUrl,
+  mensajeDirecto,
   mensajePrivadoAlComentario,
+  perfilDeQuienEscribe,
   responderComentario,
 } from "./instagram";
 import {
+  MAX_PETICIONES_DE_FOLLOW,
+  RECORDATORIO_FOLLOW,
   RESPUESTA_PUBLICA,
   comentariosConLaClave,
+  pideQueLeDejen,
   promptDeEntrega,
 } from "./magnets";
 import { chat } from "./openrouter";
@@ -107,36 +112,21 @@ export async function atenderComentarios(
   const ajustes = await ajustesEfectivos(fila.iman.workspaceId);
   const systemPrompt = await promptDeCampana(await campanaDelImanId(fila.iman));
 
+  const idDe = new Map(crudos.map((c) => [c.id, c.from?.id]));
+
   const hechos: Record<string, unknown>[] = [];
   for (const c of nuevos.slice(0, maximo)) {
-    const r = await chat({
-      model: ajustes.openrouterModel,
-      maxTokens: 400,
-      temperature: 0.8,
-      messages: [
-        ...(systemPrompt
-          ? [{ role: "system" as const, content: systemPrompt }]
-          : []),
-        {
-          role: "user" as const,
-          content: promptDeEntrega({
-            nombre: c.fullName || c.username,
-            clave: fila.iman.keyword,
-            recurso: fila.iman.resource,
-            comentario: textoDe.get(c.commentId!) ?? fila.iman.keyword,
-          }),
-        },
-      ],
-    });
-    let texto = r.text.trim();
-
-    // El mismo filtro que el resto del sistema: ninguna cifra de dinero sale
-    // por un chat. Si el modelo la mete, se manda el recurso a secas.
-    if (mencionaDinero(texto)) texto = fila.iman.resource;
-    // El recurso tiene que ir sí o sí: es lo único que se ha prometido.
-    if (!texto.includes(fila.iman.resource)) {
-      texto = `${texto}\n\n${fila.iman.resource}`;
-    }
+    /**
+     * Al comentario se le pide el follow, no se le entrega el recurso.
+     *
+     * Comprobar si te sigue exige que esa persona te haya ESCRITO antes: hasta
+     * entonces Meta responde 230 "User consent is required". Su respuesta a
+     * este mensaje es lo que abre la puerta a poder comprobarlo.
+     *
+     * El texto es el que escribió la persona en el imán, sin tocarlo: es su
+     * condición y no le corresponde reformularla a un modelo.
+     */
+    const texto = fila.iman.followMessage;
 
     const publico =
       RESPUESTA_PUBLICA[
@@ -170,8 +160,11 @@ export async function atenderComentarios(
       username: c.username,
       fullName: c.fullName,
       commentId: c.commentId,
-      state: "entregado",
-      deliveredAt: new Date(),
+      // El id con el que Meta le llama al escribir. Es la única forma de casar
+      // su respuesta con este contacto.
+      providerId: idDe.get(c.commentId!) ?? null,
+      state: "pidiendo_follow",
+      followAsks: 1,
     });
     hechos.push({
       usuario: c.username,
@@ -197,4 +190,121 @@ export async function atenderComentarios(
     nuevos: nuevos.length,
     hechos,
   };
+}
+
+/**
+ * Alguien contestó por privado a un imán: comprobar si sigue y actuar.
+ *
+ * Este es el momento en el que se puede preguntar si te sigue, y no antes:
+ * hasta que esa persona no te escribe, Meta responde "User consent is
+ * required". Por eso el embudo pide primero y comprueba después.
+ */
+export async function atenderMensaje(
+  igsid: string,
+  texto: string,
+): Promise<{ atendido: boolean; que?: string; detalle?: string }> {
+  const [fila] = await db
+    .select({ contacto: magnetContacts, iman: leadMagnets, cuenta: accounts })
+    .from(magnetContacts)
+    .innerJoin(leadMagnets, eq(leadMagnets.id, magnetContacts.magnetId))
+    .innerJoin(accounts, eq(accounts.id, leadMagnets.accountId))
+    .where(eq(magnetContacts.providerId, igsid));
+  if (!fila) return { atendido: false, que: "no es de ningún imán" };
+
+  // Si pidió que le dejaran en paz, se para aquí y no recibe nada más.
+  if (pideQueLeDejen(texto)) {
+    await db
+      .update(magnetContacts)
+      .set({ state: "descartado" })
+      .where(eq(magnetContacts.id, fila.contacto.id));
+    return { atendido: true, que: "pidió que le dejaran en paz" };
+  }
+
+  if (fila.contacto.state !== "pidiendo_follow") {
+    // Ya tiene el recurso: la conversación es del agente, no del imán.
+    return { atendido: false, que: `está en "${fila.contacto.state}"` };
+  }
+
+  const cuenta = await tokenDeCuenta(fila.cuenta.id);
+  if (!cuenta) return { atendido: false, que: "la cuenta no está autorizada" };
+
+  const perfil = await perfilDeQuienEscribe(cuenta.token, igsid);
+
+  if (!perfil.is_user_follow_business) {
+    /**
+     * No sigue. Se le dice UNA vez y se para.
+     *
+     * A la segunda ya no es recordar, es insistir; y quedarse callado después
+     * de que te escriban es lo que hace que parezca un bot roto.
+     */
+    if (fila.contacto.followAsks >= MAX_PETICIONES_DE_FOLLOW) {
+      return { atendido: false, que: "ya se le recordó y sigue sin seguir" };
+    }
+    await mensajeDirecto(
+      cuenta.token,
+      cuenta.igUserId,
+      igsid,
+      RECORDATORIO_FOLLOW,
+    );
+    await db
+      .update(magnetContacts)
+      .set({ followAsks: fila.contacto.followAsks + 1 })
+      .where(eq(magnetContacts.id, fila.contacto.id));
+    return { atendido: true, que: "no sigue: se le ha recordado" };
+  }
+
+  // Sí sigue: se le entrega, y el mensaje lo escribe el agente.
+  const ajustes = await ajustesEfectivos(fila.iman.workspaceId);
+  const systemPrompt = await promptDeCampana(await campanaDelImanId(fila.iman));
+  let mensaje = fila.iman.resource;
+  try {
+    const r = await chat({
+      model: ajustes.openrouterModel,
+      maxTokens: 400,
+      temperature: 0.8,
+      messages: [
+        ...(systemPrompt
+          ? [{ role: "system" as const, content: systemPrompt }]
+          : []),
+        {
+          role: "user" as const,
+          content: promptDeEntrega({
+            nombre: perfil.username ?? fila.contacto.username,
+            clave: fila.iman.keyword,
+            recurso: fila.iman.resource,
+            comentario: texto,
+          }),
+        },
+      ],
+    });
+    mensaje = r.text.trim();
+  } catch {
+    // Sin modelo se manda el recurso a secas: es lo prometido, y eso no falla.
+  }
+
+  // El mismo filtro que el resto del sistema: ninguna cifra de dinero por chat.
+  if (mencionaDinero(mensaje)) mensaje = fila.iman.resource;
+  // Y el recurso tiene que ir sí o sí: es lo único que se ha prometido.
+  if (!mensaje.includes(fila.iman.resource)) {
+    mensaje = `${mensaje}\n\n${fila.iman.resource}`;
+  }
+
+  await mensajeDirecto(cuenta.token, cuenta.igUserId, igsid, mensaje);
+  await db
+    .update(magnetContacts)
+    .set({
+      state: "entregado",
+      verifiedAt: new Date(),
+      deliveredAt: new Date(),
+    })
+    .where(eq(magnetContacts.id, fila.contacto.id));
+
+  await db.insert(runLogs).values({
+    workflow: "iman",
+    level: "info",
+    message: `@${perfil.username ?? fila.contacto.username} sigue a la cuenta: recurso entregado.`,
+    payload: { magnetId: fila.iman.id, contactId: fila.contacto.id },
+  });
+
+  return { atendido: true, que: "sigue: recurso entregado", detalle: mensaje };
 }

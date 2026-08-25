@@ -360,6 +360,35 @@ export async function mensajePrivadoAlComentario(
   });
 }
 
+export type PerfilDeQuienEscribe = {
+  id: string;
+  username?: string;
+  name?: string;
+  /** Si esa persona sigue a la cuenta. Es lo que abre la puerta del recurso. */
+  is_user_follow_business?: boolean;
+  is_business_follow_user?: boolean;
+};
+
+/**
+ * Quién es quien te escribe, y si te sigue.
+ *
+ * Solo funciona DESPUÉS de que esa persona te haya escrito: mientras solo haya
+ * comentado, Meta responde 230 "User consent is required to access user
+ * profile". Su primer mensaje es el consentimiento.
+ *
+ * Por eso el embudo pide el follow por privado y comprueba cuando contestan, y
+ * no al revés: antes de que escriban, esta pregunta no se puede hacer.
+ */
+export async function perfilDeQuienEscribe(
+  token: string,
+  igsid: string,
+): Promise<PerfilDeQuienEscribe> {
+  return pedir<PerfilDeQuienEscribe>(
+    `/${igsid}?fields=name,username,is_user_follow_business,is_business_follow_user`,
+    token,
+  );
+}
+
 /** Mensaje dentro de una conversación ya abierta, por el id de la persona. */
 export async function mensajeDirecto(
   token: string,
