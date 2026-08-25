@@ -267,6 +267,11 @@ async function pedir<T>(
 
 export type MediaInstagram = { id: string; permalink: string };
 
+/** El código de un enlace de Instagram: lo que va tras /p/, /reel/ o /tv/. */
+export function codigoDeUrl(url: string): string | null {
+  return url.match(/\/(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/)?.[1] ?? null;
+}
+
 /**
  * De la URL de un post o reel a su id interno.
  *
@@ -283,10 +288,18 @@ export async function mediaDeUrl(
     `/me/media?fields=id,permalink&limit=${limite}`,
     token,
   );
-  // El permalink de Meta lleva barra final y el que copia una persona no.
-  const normal = (u: string) => u.split("?")[0].replace(/\/+$/, "");
-  const buscada = normal(postUrl);
-  return data.find((m) => normal(m.permalink) === buscada)?.id ?? null;
+  /**
+   * Se compara el CÓDIGO, no la URL entera.
+   *
+   * El mismo post es `/p/DcbdEOhjZSr/` para quien copia el enlace y
+   * `/reel/DcbdEOhjZSr/` para Meta, así que comparar URLs no encontraba nada y
+   * el error decía que la publicación no era de esa cuenta, que es mentira.
+   * Por el código aguanta además el `/username/p/...`, los parámetros de
+   * seguimiento y la barra final.
+   */
+  const buscado = codigoDeUrl(postUrl);
+  if (!buscado) return null;
+  return data.find((m) => codigoDeUrl(m.permalink) === buscado)?.id ?? null;
 }
 
 export type ComentarioInstagram = {
@@ -331,11 +344,14 @@ export async function responderComentario(
  */
 export async function mensajePrivadoAlComentario(
   token: string,
-  igUserId: string,
+  _igUserId: string,
   comentarioId: string,
   texto: string,
 ): Promise<{ message_id?: string }> {
-  return pedir<{ message_id?: string }>(`/${igUserId}/messages`, token, {
+  // Por `/me` y no por el id: la cuenta tiene dos identificadores parecidos
+  // —`id` y `user_id`, que se diferencian en un dígito— y equivocarse da un
+  // error que no dice cuál era el bueno. `me` no admite esa duda.
+  return pedir<{ message_id?: string }>(`/me/messages`, token, {
     method: "POST",
     body: {
       recipient: { comment_id: comentarioId },
@@ -347,11 +363,11 @@ export async function mensajePrivadoAlComentario(
 /** Mensaje dentro de una conversación ya abierta, por el id de la persona. */
 export async function mensajeDirecto(
   token: string,
-  igUserId: string,
+  _igUserId: string,
   destinatarioId: string,
   texto: string,
 ): Promise<{ message_id?: string }> {
-  return pedir<{ message_id?: string }>(`/${igUserId}/messages`, token, {
+  return pedir<{ message_id?: string }>(`/me/messages`, token, {
     method: "POST",
     body: {
       recipient: { id: destinatarioId },
