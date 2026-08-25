@@ -57,7 +57,19 @@ const cuerpo = z.object({
   resource: sinDinero('El recurso'),
   followMessage: sinDinero('El mensaje de seguimiento'),
   pitchMeeting: z.boolean().default(true),
-  active: z.boolean().default(false),
+  /**
+   * Un imán nace encendido.
+   *
+   * Nacía apagado y el formulario no tiene casilla para encenderlo, así que
+   * todos los imanes creados desde el panel quedaban mudos hasta que alguien
+   * encontraba el botón "Activar" de la lista. Se crea un imán para usarlo: si
+   * hay que revisarlo antes, el botón de apagar sigue estando.
+   *
+   * Apagado por defecto solo tiene sentido cuando crear algo ya lo pone a
+   * escribir a desconocidos. Un imán no hace nada hasta que alguien comenta la
+   * palabra, y quien comenta la palabra está pidiendo que le contesten.
+   */
+  active: z.boolean().default(true),
   workspaceId: z.string().uuid().optional(),
 })
 
