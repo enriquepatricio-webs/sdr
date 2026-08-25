@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "./db";
 import { campaigns, type leadMagnets } from "./db/schema";
+import { playbookActivo } from "./workspace";
 
 /**
  * La campaña de un imán, creándola la primera vez.
@@ -41,6 +42,15 @@ export async function campanaDelImanId(
        * se mandaba y ahí se acababa todo.
        */
       status: "running",
+      /**
+       * Con playbook, que es lo que la hace ejecutable.
+       *
+       * La base de datos no deja que una campaña esté en marcha sin él, y con
+       * razón: sin playbook el agente no sabe qué vende ni cómo agendar, y
+       * descubrirlo a mitad de una conversación es descubrirlo tarde. Se coge
+       * el de la empresa, o el de fábrica si no tiene uno propio.
+       */
+      playbookId: (await playbookActivo(iman.workspaceId))?.id ?? null,
       workspaceId: iman.workspaceId,
       accountId: iman.accountId,
       channel: "instagram",
