@@ -99,7 +99,11 @@ export async function POST(
           .where(eq(magnetContacts.magnetId, fila.iman.id))
       ).map((c) => c.username),
     );
-    const nuevos = conClave.filter((c) => !yaEstan.has(c.username));
+    const nuevos = conClave.filter(
+      (c) => !yaEstan.has(c.username) && c.commentId,
+    );
+    /** El texto original, para que el agente sepa qué le han escrito. */
+    const textoDe = new Map(crudos.map((c) => [c.id, c.text]));
 
     const ajustes = await ajustesEfectivos(fila.iman.workspaceId);
     const campaignId = await campanaDelImanId(fila.iman);
@@ -121,7 +125,7 @@ export async function POST(
               nombre: c.fullName || c.username,
               clave: fila.iman.keyword,
               recurso: fila.iman.resource,
-              comentario: c.text ?? fila.iman.keyword,
+              comentario: textoDe.get(c.commentId!) ?? fila.iman.keyword,
             }),
           },
         ],
@@ -146,7 +150,7 @@ export async function POST(
       if (ensayo) {
         hechos.push({
           usuario: c.username,
-          comentario: c.text,
+          comentario: textoDe.get(c.commentId!),
           publico,
           privado: texto,
         });
@@ -155,13 +159,13 @@ export async function POST(
 
       const respuesta = await responderComentario(
         cuenta.token,
-        c.commentId,
+        c.commentId!,
         publico,
       );
       const dm = await mensajePrivadoAlComentario(
         cuenta.token,
         cuenta.igUserId,
-        c.commentId,
+        c.commentId!,
         texto,
       );
 
