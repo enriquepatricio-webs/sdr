@@ -52,20 +52,66 @@ export async function GET(request: Request) {
  * Se calcula sobre el cuerpo EN CRUDO: volver a serializar el JSON cambia
  * espacios y orden y la firma deja de cuadrar.
  */
-function firmaValida(crudo: string, cabecera: string | null): boolean {
+type Veredicto = { vale: boolean; motivo: string; calculada?: string };
+
+function firmaValida(crudo: string, cabecera: string | null): Veredicto {
   const secreto = process.env.META_APP_SECRET;
-  if (!secreto || !cabecera?.startsWith("sha256=")) return false;
+  if (!secreto) return { vale: false, motivo: "no hay META_APP_SECRET" };
+  if (!cabecera) {
+    return { vale: false, motivo: "la petición no trae x-hub-signature-256" };
+  }
+  if (!cabecera.startsWith("sha256=")) {
+    return { vale: false, motivo: `la firma no empieza por sha256=` };
+  }
 
   const esperada = createHmac("sha256", secreto).update(crudo).digest();
   const recibida = Buffer.from(cabecera.slice("sha256=".length), "hex");
-  if (recibida.length !== esperada.length) return false;
-  return timingSafeEqual(recibida, esperada);
+  if (recibida.length !== esperada.length) {
+    return { vale: false, motivo: "la firma no mide 32 bytes" };
+  }
+  if (!timingSafeEqual(recibida, esperada)) {
+    return {
+      vale: false,
+      motivo: "la firma no cuadra con el secreto",
+      calculada: esperada.toString("hex"),
+    };
+  }
+  return { vale: true, motivo: "ok" };
 }
 
 export async function POST(request: Request) {
   const crudo = await request.text();
+  const cabecera = request.headers.get("x-hub-signature-256");
+  const veredicto = firmaValida(crudo, cabecera);
 
-  if (!firmaValida(crudo, request.headers.get("x-hub-signature-256"))) {
+  if (!veredicto.vale) {
+    /**
+     * Un rechazo tiene que dejar rastro.
+     *
+     * Meta reintenta lo que no contesta 200 y en su panel eso sigue saliendo
+     * como "se probó correctamente el campo": desde su lado la entrega salió
+     * bien. Sin este registro, un secreto mal pegado es indistinguible de una
+     * suscripción que no se guardó, y las dos se ven igual: silencio.
+     *
+     * No se guarda el secreto en ningún caso. Sí la firma calculada, que es un
+     * hash y no permite recuperarlo, porque compararla con la que manda Meta es
+     * lo único que separa "el secreto es otro" de "el cuerpo llegó cambiado".
+     */
+    await db.insert(runLogs).values({
+      workflow: "meta-webhook",
+      level: "warn",
+      message: `Evento de Meta rechazado: ${veredicto.motivo}`,
+      payload: {
+        motivo: veredicto.motivo,
+        firmaRecibida: cabecera,
+        firmaCalculada: veredicto.calculada ?? null,
+        // Cuánto mide el secreto, no el secreto. Un valor mal pegado —el App ID
+        // en vez de la clave, o con un salto de línea detrás— se ve aquí.
+        largoDelSecreto: process.env.META_APP_SECRET?.length ?? 0,
+        bytesDelCuerpo: crudo.length,
+        cuerpo: crudo.slice(0, 500),
+      },
+    });
     return new NextResponse("No.", { status: 403 });
   }
 
