@@ -43,6 +43,13 @@
       "when": 1787661607908,
       "tag": "0005_token-de-meta",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787672323545,
+      "tag": "0006_usuarios",
+      "breakpoints": true
     }
   ]
 }

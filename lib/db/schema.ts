@@ -921,6 +921,36 @@ export const magnetContacts = pgTable(
   ],
 )
 
+/**
+ * Quién puede entrar al panel.
+ *
+ * Antes era una sola contraseña compartida, sin usuario. Se cambia porque la
+ * revisión de Meta exige credenciales con las que un revisor pueda entrar a ver
+ * la app, y darle la contraseña del dueño significaría que para revocarle el
+ * acceso habría que cambiársela a todo el mundo.
+ *
+ * La contraseña NUNCA se guarda: solo su hash con scrypt y una sal por usuario.
+ * Aunque alguien se lleve la base entera, no se lleva ninguna contraseña.
+ */
+export const users = pgTable(
+  'users',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    username: text('username').notNull(),
+    /** `scrypt$sal$hash`, todo en hexadecimal. Nunca la contraseña. */
+    passwordHash: text('password_hash').notNull(),
+    /** `admin` puede gestionar usuarios; `revisor` solo mira. */
+    role: text('role').notNull().default('admin'),
+    lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // En minúsculas: "Admin" y "admin" son la misma persona, y permitir las dos
+    // es dejar la puerta abierta a suplantar a alguien con otra caja.
+    uniqueIndex('users_username_key').on(sql`lower(${t.username})`),
+  ],
+)
+
 export const settings = pgTable('settings', {
   key: text('key').primaryKey(),
   value: jsonb('value').$type<unknown>().notNull(),

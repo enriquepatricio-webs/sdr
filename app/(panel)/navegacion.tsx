@@ -1,7 +1,7 @@
-'use client'
+"use client";
 
-import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 /**
  * Cuatro sitios, y punto.
@@ -13,35 +13,36 @@ import { usePathname } from 'next/navigation'
  * siempre delante convertía el menú en un inventario.
  */
 const RUTAS = [
-  { href: '/', etiqueta: 'Panel' },
-  { href: '/campaigns', etiqueta: 'Campañas' },
-  { href: '/leads', etiqueta: 'Leads' },
-  { href: '/settings', etiqueta: 'Ajustes' },
-]
+  { href: "/", etiqueta: "Panel" },
+  { href: "/campaigns", etiqueta: "Campañas" },
+  { href: "/leads", etiqueta: "Leads" },
+  { href: "/usuarios", etiqueta: "Usuarios" },
+  { href: "/settings", etiqueta: "Ajustes" },
+];
 
 export function Navegacion() {
-  const ruta = usePathname()
-  const rutas = RUTAS
+  const ruta = usePathname();
+  const rutas = RUTAS;
 
   return (
     <nav className="flex flex-wrap items-center gap-1">
       {rutas.map(({ href, etiqueta }) => {
-        const activa = href === '/' ? ruta === '/' : ruta.startsWith(href)
+        const activa = href === "/" ? ruta === "/" : ruta.startsWith(href);
         return (
           <Link
             key={href}
             href={href}
-            aria-current={activa ? 'page' : undefined}
+            aria-current={activa ? "page" : undefined}
             className={
               activa
-                ? 'rounded-sm bg-tinta px-2.5 py-1 text-sm font-medium text-lienzo'
-                : 'rounded-sm px-2.5 py-1 text-sm font-medium text-apagado transition-colors hover:bg-papel hover:text-tinta'
+                ? "rounded-sm bg-tinta px-2.5 py-1 text-sm font-medium text-lienzo"
+                : "rounded-sm px-2.5 py-1 text-sm font-medium text-apagado transition-colors hover:bg-papel hover:text-tinta"
             }
           >
             {etiqueta}
           </Link>
-        )
+        );
       })}
     </nav>
-  )
+  );
 }
