@@ -34,31 +34,54 @@ export async function GET(request: Request) {
 
   try {
     const token = await canjearCodigo(code, urlDeVuelta(request));
-    const perfil = await quienEs(token.access_token);
 
+    /**
+     * El token se guarda ANTES de nada más.
+     *
+     * Es lo único que no se puede recuperar: si se pierde, hay que volver a
+     * pasar por Instagram. Leer el perfil es decoración, y tenerlo delante
+     * fallaba la autorización entera por un dato que se puede pedir luego —y
+     * dejaba sin token con el que averiguar por qué fallaba.
+     */
     await db
       .update(accounts)
       .set({
         metaToken: token.access_token,
         metaTokenExpiresAt: new Date(Date.now() + token.expires_in * 1000),
-        igUserId: perfil.id,
-        instagramUsername: perfil.username,
-        // Autorizar es exactamente lo que la vuelve a poner en marcha.
+        igUserId: token.user_id,
         status: "active",
       })
       .where(eq(accounts.id, accountId));
+
+    let perfil: { id: string; username: string } | null = null;
+    try {
+      perfil = await quienEs(token.access_token);
+      await db
+        .update(accounts)
+        .set({ igUserId: perfil.id, instagramUsername: perfil.username })
+        .where(eq(accounts.id, accountId));
+    } catch (err) {
+      await db.insert(runLogs).values({
+        workflow: "instagram",
+        level: "warn",
+        message: `Token guardado, pero no se pudo leer el perfil: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+        payload: { accountId, igUserId: token.user_id },
+      });
+    }
 
     await db.insert(runLogs).values({
       workflow: "instagram",
       level: token.sinAlargar ? "warn" : "info",
       message: token.sinAlargar
-        ? `@${perfil.username} autorizó, pero el token se quedó corto (1 h): ${token.sinAlargar}`
-        : `@${perfil.username} autorizó la app. Token válido ${Math.round(token.expires_in / 86400)} días.`,
-      payload: { accountId, igUserId: perfil.id },
+        ? `${perfil ? "@" + perfil.username : "La cuenta"} autorizó, pero el token se quedó corto (1 h): ${token.sinAlargar}`
+        : `${perfil ? "@" + perfil.username : "La cuenta"} autorizó la app. Token válido ${Math.round(token.expires_in / 86400)} días.`,
+      payload: { accountId, igUserId: token.user_id },
     });
 
     panel.searchParams.set("instagram", token.sinAlargar ? "corto" : "ok");
-    panel.searchParams.set("usuario", perfil.username);
+    panel.searchParams.set("usuario", perfil?.username ?? "sin nombre");
     return NextResponse.redirect(panel);
   } catch (err) {
     const detalle = err instanceof Error ? err.message : String(err);
