@@ -326,10 +326,18 @@ await prueba("se elige la conexión de calendario que está viva", async () => {
         toolkit: { slug: "googlecalendar" },
         status: "EXPIRED",
       },
-      { id: "ca_buena", toolkit: { slug: "googlecalendar" }, status: "ACTIVE" },
+      {
+        id: "ca_buena",
+        toolkit: { slug: "googlecalendar" },
+        status: "ACTIVE",
+        user_id: "u_1",
+      },
     ],
   });
-  assert.equal(await cuentaDeCalendario(), "ca_buena");
+  const cuenta = await cuentaDeCalendario();
+  assert.equal(cuenta.id, "ca_buena");
+  // El user_id sale de la propia conexión: Composio exige los dos juntos.
+  assert.equal(cuenta.userId, "u_1");
 });
 
 await prueba("sin ninguna conexión viva se explica por qué", async () => {
