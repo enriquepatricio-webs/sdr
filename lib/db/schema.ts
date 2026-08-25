@@ -241,6 +241,21 @@ export const accounts = pgTable(
      * mucho mejor que funcionar en falso.
      */
     instagramUsername: text('instagram_username'),
+    /**
+     * Instagram por la API oficial de Meta, no por Unipile.
+     *
+     * Vive aquí y no en una tabla aparte porque una cuenta es una cuenta: los
+     * imanes y las campañas ya cuelgan de esta fila, y separarla obligaría a
+     * decidir en cada consulta cuál de las dos mirar.
+     *
+     * El token dura 60 días y se puede renovar. `metaTokenExpiresAt` está para
+     * poder avisar ANTES de que caduque, en vez de descubrirlo el día que un
+     * comentario se queda sin contestar.
+     */
+    metaToken: text('meta_token'),
+    metaTokenExpiresAt: timestamp('meta_token_expires_at', { withTimezone: true }),
+    /** El id de la cuenta de Instagram segun Meta. Lo devuelve el propio token. */
+    igUserId: text('ig_user_id'),
     dailyLimit: integer('daily_limit').notNull().default(DEFAULT_DAILY_LIMIT),
     /** null = sin tope horario. Obligatorio en la práctica para Instagram. */
     hourlyLimit: integer('hourly_limit'),

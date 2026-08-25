@@ -1,13 +1,13 @@
-import { asc, eq, isNull, or } from 'drizzle-orm'
-import { db } from '@/lib/db'
-import { accounts } from '@/lib/db/schema'
-import { workspaceActivo } from '@/lib/workspace'
-import { EditorEmpresa } from './editor'
+import { asc, eq, isNull, or } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { accounts } from "@/lib/db/schema";
+import { workspaceActivo } from "@/lib/workspace";
+import { EditorEmpresa } from "./editor";
 
-export const dynamic = 'force-dynamic'
+export const dynamic = "force-dynamic";
 
 export default async function PaginaEmpresa() {
-  const empresa = await workspaceActivo()
+  const empresa = await workspaceActivo();
 
   // Las cuentas sin empresa salen aquí también. Ya no se crean así, pero las de
   // antes siguen existiendo y son INSERVIBLES: la clave ajena compuesta impide
@@ -16,16 +16,21 @@ export default async function PaginaEmpresa() {
     ? await db
         .select()
         .from(accounts)
-        .where(or(eq(accounts.workspaceId, empresa.id), isNull(accounts.workspaceId)))
+        .where(
+          or(
+            eq(accounts.workspaceId, empresa.id),
+            isNull(accounts.workspaceId),
+          ),
+        )
         .orderBy(asc(accounts.createdAt))
-    : []
+    : [];
 
   return (
     // `key` fuerza el remontaje al cambiar de empresa. El formulario guarda lo
     // escrito en estado local, y sin esto seguiría enseñando los datos de la
     // empresa anterior después de cambiar en la cabecera.
     <EditorEmpresa
-      key={empresa?.id ?? 'sin-empresa'}
+      key={empresa?.id ?? "sin-empresa"}
       empresaId={empresa?.id ?? null}
       empresa={
         empresa && {
@@ -45,8 +50,9 @@ export default async function PaginaEmpresa() {
         status: c.status,
         hourlyLimit: c.hourlyLimit,
         instagramUsername: c.instagramUsername,
+        autorizadaEn: c.metaTokenExpiresAt?.toISOString() ?? null,
         huerfana: c.workspaceId === null,
       }))}
     />
-  )
+  );
 }
