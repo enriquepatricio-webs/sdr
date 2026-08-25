@@ -253,23 +253,28 @@ export async function quienEs(token: string): Promise<PerfilInstagram> {
 /* Publicaciones y comentarios                                                 */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * El token va en la cabecera, no en la URL.
+ *
+ * Como parámetro acaba en cualquier sitio donde se escriba una URL: los
+ * registros de la plataforma, un mensaje de error, una traza. Un token de
+ * Instagram vale sesenta días y da acceso a leer y escribir en la cuenta, así
+ * que no puede vivir en un sitio donde se copie sin pensar.
+ */
 async function pedir<T>(
   ruta: string,
   token: string,
   init?: { method: string; body: unknown },
 ): Promise<T> {
-  const separador = ruta.includes("?") ? "&" : "?";
-  const res = await fetch(
-    `${GRAPH}${ruta}${separador}access_token=${encodeURIComponent(token)}`,
-    init
-      ? {
-          method: init.method,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(init.body),
-          cache: "no-store",
-        }
-      : { cache: "no-store" },
-  );
+  const res = await fetch(`${GRAPH}${ruta}`, {
+    method: init?.method ?? "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(init ? { "Content-Type": "application/json" } : {}),
+    },
+    ...(init ? { body: JSON.stringify(init.body) } : {}),
+    cache: "no-store",
+  });
   const texto = await res.text();
   if (!res.ok) {
     throw new InstagramError(
