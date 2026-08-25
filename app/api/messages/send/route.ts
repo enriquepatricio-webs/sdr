@@ -22,6 +22,8 @@ import {
   notaDeInvitacion,
   obtenerUsuario,
 } from "@/lib/unipile";
+import { mensajeDirecto } from "@/lib/instagram";
+import { tokenDeCuenta } from "@/lib/instagram-cuenta";
 import { ajustesEfectivos } from "@/lib/workspace";
 import { AVISO_SIN_PRECIOS, mencionaDinero } from "@/lib/sin-precios";
 
@@ -305,6 +307,36 @@ export async function POST(request: Request) {
         });
         messageId = r.message_id;
         chatId = r.chat_id;
+      } else if (campana.channel === "instagram" && cuenta.metaToken) {
+        /**
+         * Instagram por la API de Meta.
+         *
+         * Es el camino nuevo: Unipile ya no interviene. El destinatario es el
+         * identificador con el que Meta llama a esa persona, que se guarda
+         * cuando comenta o cuando escribe — y es el único que reconoce.
+         *
+         * Sin esta rama, el agente redactaba la respuesta y el envío se iba por
+         * Unipile a una cuenta que ya no está conectada: la conversación se
+         * moría justo después de entregar el recurso.
+         */
+        if (!lead.providerId) {
+          throw new ErrorAntesDeEnviar(
+            "Ese lead no tiene identificador de Instagram: no se sabe a quién escribir.",
+          );
+        }
+        const viva = await tokenDeCuenta(cuenta.id);
+        if (!viva) {
+          throw new ErrorAntesDeEnviar(
+            `La cuenta "${cuenta.displayName}" ya no está autorizada en Instagram.`,
+          );
+        }
+        const r = await mensajeDirecto(
+          viva.token,
+          viva.igUserId,
+          lead.providerId,
+          d.texto,
+        );
+        messageId = r.message_id ?? "enviado";
       } else {
         /**
          * Instagram. El `provider_id` guardado NO sirve para abrir un chat.

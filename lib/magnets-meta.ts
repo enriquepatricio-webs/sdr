@@ -1,6 +1,12 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "./db";
-import { accounts, leadMagnets, magnetContacts, runLogs } from "./db/schema";
+import {
+  accounts,
+  leadMagnets,
+  leads,
+  magnetContacts,
+  runLogs,
+} from "./db/schema";
 import { tokenDeCuenta } from "./instagram-cuenta";
 import {
   comentariosDeMedia,
@@ -15,6 +21,7 @@ import {
   RECORDATORIO_FOLLOW,
   RESPUESTA_PUBLICA,
   comentariosConLaClave,
+  minutosHastaElNudge,
   pideQueLeDejen,
   promptDeEntrega,
 } from "./magnets";
@@ -193,6 +200,90 @@ export async function atenderComentarios(
 }
 
 /**
+ * Le pasa el mensaje al agente de conversaciones, por el webhook de siempre.
+ *
+ * No espera respuesta: el agente tarda segundos en pensar y quien escribió está
+ * mirando la pantalla, pero bloquear aquí solo conseguiría que Meta reintentara
+ * el aviso y el mensaje entrara dos veces.
+ */
+async function pasarAlAgente(
+  leadId: string | null,
+  igsid: string,
+  texto: string,
+): Promise<void> {
+  const webhook = process.env.N8N_INBOUND_WEBHOOK_URL;
+  if (!webhook || !leadId) return;
+  try {
+    await fetch(webhook, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "message_received",
+        message_id: `ig-${igsid}-${Date.now()}`,
+        message: texto,
+        is_sender: false,
+        sender: { attendee_provider_id: igsid },
+        attendees: [],
+        origen: "instagram-meta",
+      }),
+    });
+  } catch {
+    // Que no llegue al agente no puede tumbar la respuesta al webhook de Meta:
+    // si tumbamos, Meta reintenta y el mensaje entra dos veces.
+  }
+}
+
+/**
+ * El lead de un contacto que ya tiene el recurso.
+ *
+ * Se crea al ENTREGAR y no al detectar el comentario: antes de eso no hay nada
+ * que prospectar, solo alguien que ha pedido algo. Y el `provider_id` es el
+ * identificador de Meta, que es con el que el envío sabrá escribirle.
+ */
+async function asegurarLeadDelIman(
+  iman: typeof leadMagnets.$inferSelect,
+  contacto: typeof magnetContacts.$inferSelect,
+  igsid: string,
+  datos: { username: string },
+): Promise<string | null> {
+  if (contacto.leadId) return contacto.leadId;
+  const campaignId = await campanaDelImanId(iman);
+
+  const [creado] = await db
+    .insert(leads)
+    .values({
+      campaignId,
+      fullName: contacto.fullName || datos.username,
+      // De dónde salió: sin esto el agente le habla como a un desconocido al
+      // que se escribe en frío, y se presenta a alguien que acaba de hablar
+      // contigo hace un minuto.
+      headline: `Pidió "${iman.keyword}" en un comentario y ya tiene el recurso`,
+      instagramUsername: datos.username,
+      providerId: igsid,
+      status: "contactado",
+      // El "¿qué tal?" no sale a los dos minutos: no le ha dado tiempo a nadie
+      // a abrirlo. Entre 40 y 120 minutos es lo que tardaría una persona.
+      nextActionAt: new Date(
+        Date.now() + minutosHastaElNudge(contacto.id) * 60_000,
+      ),
+    })
+    .onConflictDoNothing()
+    .returning({ id: leads.id });
+  if (creado) return creado.id;
+
+  const [existente] = await db
+    .select({ id: leads.id })
+    .from(leads)
+    .where(
+      and(
+        eq(leads.campaignId, campaignId),
+        eq(leads.instagramUsername, datos.username),
+      ),
+    );
+  return existente?.id ?? null;
+}
+
+/**
  * Alguien contestó por privado a un imán: comprobar si sigue y actuar.
  *
  * Este es el momento en el que se puede preguntar si te sigue, y no antes:
@@ -221,8 +312,16 @@ export async function atenderMensaje(
   }
 
   if (fila.contacto.state !== "pidiendo_follow") {
-    // Ya tiene el recurso: la conversación es del agente, no del imán.
-    return { atendido: false, que: `está en "${fila.contacto.state}"` };
+    /**
+     * Ya tiene el recurso: la conversación es del agente.
+     *
+     * Se le pasa por el mismo webhook de n8n que usan el correo y LinkedIn, en
+     * vez de montarle aquí una segunda cañería. Un segundo camino hasta el
+     * prospecto sería un segundo sitio donde olvidarse de comprobar si pidió la
+     * baja, y esa comprobación no puede vivir en dos sitios.
+     */
+    await pasarAlAgente(fila.contacto.leadId, igsid, texto);
+    return { atendido: true, que: "lo lleva el agente" };
   }
 
   const cuenta = await tokenDeCuenta(fila.cuenta.id);
@@ -290,12 +389,27 @@ export async function atenderMensaje(
   }
 
   await mensajeDirecto(cuenta.token, cuenta.igUserId, igsid, mensaje);
+
+  /**
+   * A partir de aquí es un lead, no un contacto de un imán.
+   *
+   * El imán ha cumplido: pidió, comprobó y entregó. Lo que venga después —qué
+   * tal le ha ido, si encaja, cerrar una reunión— es trabajo del agente, y el
+   * agente solo sabe hablar de leads. Sin esta fila, la conversación se acaba
+   * justo en el mejor momento: cuando esa persona acaba de recibir algo tuyo y
+   * está mirando el móvil.
+   */
+  const leadId = await asegurarLeadDelIman(fila.iman, fila.contacto, igsid, {
+    username: perfil.username ?? fila.contacto.username,
+  });
+
   await db
     .update(magnetContacts)
     .set({
       state: "entregado",
       verifiedAt: new Date(),
       deliveredAt: new Date(),
+      leadId,
     })
     .where(eq(magnetContacts.id, fila.contacto.id));
 
