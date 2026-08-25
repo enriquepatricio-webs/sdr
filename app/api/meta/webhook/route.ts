@@ -186,12 +186,28 @@ async function atenderMensajeEntrante(
 ): Promise<void> {
   try {
     const r = await atenderMensaje(igsid, texto, igUserId);
+    /**
+     * También se registra cuando NO se ha podido atender.
+     *
+     * Antes solo se escribía la línea del caso bueno, así que un mensaje que
+     * se quedaba sin respuesta no dejaba ni rastro: desde el panel se veía
+     * exactamente igual que un día sin mensajes. Lo único que no se registra
+     * es "no es de ningún imán", que es lo normal —cualquier persona puede
+     * escribir a la cuenta— y llenaría el registro de ruido.
+     */
     if (r.atendido) {
       await db.insert(runLogs).values({
         workflow: "iman",
         level: "info",
         message: `Mensaje de un contacto del imán: ${r.que}`,
         payload: { igsid },
+      });
+    } else if (r.que && r.que !== "no es de ningún imán") {
+      await db.insert(runLogs).values({
+        workflow: "iman",
+        level: "warn",
+        message: `Un mensaje del imán se quedó sin atender: ${r.que}`,
+        payload: { igsid, detalle: r.detalle ?? null },
       });
     }
   } catch (err) {

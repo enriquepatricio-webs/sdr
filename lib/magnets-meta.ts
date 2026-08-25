@@ -225,9 +225,9 @@ async function pasarAlAgente(
   leadId: string | null,
   igsid: string,
   texto: string,
-): Promise<void> {
+): Promise<boolean> {
   const webhook = process.env.N8N_INBOUND_WEBHOOK_URL;
-  if (!webhook || !leadId) return;
+  if (!webhook || !leadId) return false;
   try {
     await fetch(webhook, {
       method: "POST",
@@ -242,9 +242,17 @@ async function pasarAlAgente(
         origen: "instagram-meta",
       }),
     });
+    return true;
   } catch {
-    // Que no llegue al agente no puede tumbar la respuesta al webhook de Meta:
-    // si tumbamos, Meta reintenta y el mensaje entra dos veces.
+    /**
+     * Que no llegue al agente no puede tumbar la respuesta al webhook de Meta:
+     * si tumbamos, Meta reintenta y el mensaje entra dos veces.
+     *
+     * Pero sí se dice que no llegó. Devolver "atendido" sin haber atendido a
+     * nadie deja una conversación muerta y un registro que jura que todo fue
+     * bien, que es la peor combinación posible para averiguar qué pasó.
+     */
+    return false;
   }
 }
 
@@ -411,9 +419,33 @@ export async function atenderMensaje(
      * vez de montarle aquí una segunda cañería. Un segundo camino hasta el
      * prospecto sería un segundo sitio donde olvidarse de comprobar si pidió la
      * baja, y esa comprobación no puede vivir en dos sitios.
+     *
+     * El lead se crea aquí si no lo tiene. Los contactos entregados antes de
+     * que el embudo creara leads —y cualquiera al que Meta no le diera
+     * identificador en su momento— se quedaron sin él, y sin lead el agente no
+     * tiene a quién contestar: la persona escribía y no pasaba nada.
      */
-    await pasarAlAgente(fila.contacto.leadId, igsid, texto);
-    return { atendido: true, que: "lo lleva el agente" };
+    const leadId =
+      fila.contacto.leadId ??
+      (await asegurarLeadDelIman(fila.iman, fila.contacto, igsid, {
+        username: fila.contacto.username,
+      }));
+    if (leadId && leadId !== fila.contacto.leadId) {
+      await db
+        .update(magnetContacts)
+        .set({ leadId })
+        .where(eq(magnetContacts.id, fila.contacto.id));
+    }
+    const entregado = await pasarAlAgente(leadId, igsid, texto);
+    return entregado
+      ? { atendido: true, que: "lo lleva el agente" }
+      : {
+          atendido: false,
+          que: "no se pudo pasar al agente",
+          detalle: leadId
+            ? "el webhook de n8n no contestó"
+            : "no se pudo crear el lead",
+        };
   }
 
   const cuenta = await tokenDeCuenta(fila.cuenta.id);
