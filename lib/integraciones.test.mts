@@ -356,7 +356,7 @@ await prueba("consultarDisponibilidad pide el rango correcto", async () => {
   });
   await consultarDisponibilidad(
     REGLAS,
-    { connectedAccountId: "ca_prueba" },
+    { connectedAccountId: "ca_prueba", userId: "u_prueba" },
     LUNES,
   );
   assert.ok(c[0].url.includes("GOOGLECALENDAR_FIND_FREE_SLOTS"));
@@ -374,7 +374,7 @@ await prueba("un successful:false lanza aunque el HTTP sea 200", async () => {
     () =>
       consultarDisponibilidad(
         REGLAS,
-        { connectedAccountId: "ca_prueba" },
+        { connectedAccountId: "ca_prueba", userId: "u_prueba" },
         LUNES,
       ),
     /token caducado/,
@@ -387,7 +387,7 @@ await prueba("un 500 de Composio lanza", async () => {
     () =>
       consultarDisponibilidad(
         REGLAS,
-        { connectedAccountId: "ca_prueba" },
+        { connectedAccountId: "ca_prueba", userId: "u_prueba" },
         LUNES,
       ),
     /500/,
@@ -411,7 +411,7 @@ await prueba(
     });
     const h = await consultarDisponibilidad(
       REGLAS,
-      { connectedAccountId: "ca_prueba" },
+      { connectedAccountId: "ca_prueba", userId: "u_prueba" },
       LUNES,
     );
     const elLunes = h.filter((x) =>
