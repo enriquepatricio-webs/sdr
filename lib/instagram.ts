@@ -14,7 +14,14 @@
 
 const AUTORIZAR = "https://www.instagram.com/oauth/authorize";
 const TOKEN = "https://api.instagram.com/oauth/access_token";
-const GRAPH = "https://graph.instagram.com";
+/**
+ * La versión va SIEMPRE en la ruta.
+ *
+ * Sin ella, `graph.instagram.com/access_token` se interpreta como el id de un
+ * objeto llamado "access_token" y Meta responde "Unsupported request - method
+ * type: get", que no se parece en nada al problema real.
+ */
+const GRAPH = "https://graph.instagram.com/v23.0";
 
 /**
  * Lo mínimo para leer comentarios, responderlos y mandar mensajes privados.
@@ -134,7 +141,7 @@ export type PerfilInstagram = { id: string; username: string };
 /** Quién es la cuenta que acaba de autorizar. Sirve para saber a cuál guardarla. */
 export async function quienEs(token: string): Promise<PerfilInstagram> {
   const res = await fetch(
-    `${GRAPH}/v23.0/me?${new URLSearchParams({ fields: "id,username", access_token: token })}`,
+    `${GRAPH}/me?${new URLSearchParams({ fields: "id,username", access_token: token })}`,
     { cache: "no-store" },
   );
   const texto = await res.text();
