@@ -232,3 +232,130 @@ export async function quienEs(token: string): Promise<PerfilInstagram> {
   }
   return JSON.parse(texto) as PerfilInstagram;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Publicaciones y comentarios                                                 */
+/* -------------------------------------------------------------------------- */
+
+async function pedir<T>(
+  ruta: string,
+  token: string,
+  init?: { method: string; body: unknown },
+): Promise<T> {
+  const separador = ruta.includes("?") ? "&" : "?";
+  const res = await fetch(
+    `${GRAPH}${ruta}${separador}access_token=${encodeURIComponent(token)}`,
+    init
+      ? {
+          method: init.method,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(init.body),
+          cache: "no-store",
+        }
+      : { cache: "no-store" },
+  );
+  const texto = await res.text();
+  if (!res.ok) {
+    throw new InstagramError(
+      `Instagram respondió ${res.status}: ${texto.slice(0, 300)}`,
+      res.status,
+      texto,
+    );
+  }
+  return (texto ? JSON.parse(texto) : {}) as T;
+}
+
+export type MediaInstagram = { id: string; permalink: string };
+
+/**
+ * De la URL de un post o reel a su id interno.
+ *
+ * Meta no ofrece "dame el id de esta URL": hay que listar las publicaciones de
+ * la cuenta y buscar la que coincide. Por eso se piden las últimas, no todas —
+ * un imán siempre apunta a algo reciente.
+ */
+export async function mediaDeUrl(
+  token: string,
+  postUrl: string,
+  limite = 50,
+): Promise<string | null> {
+  const { data } = await pedir<{ data: MediaInstagram[] }>(
+    `/me/media?fields=id,permalink&limit=${limite}`,
+    token,
+  );
+  // El permalink de Meta lleva barra final y el que copia una persona no.
+  const normal = (u: string) => u.split("?")[0].replace(/\/+$/, "");
+  const buscada = normal(postUrl);
+  return data.find((m) => normal(m.permalink) === buscada)?.id ?? null;
+}
+
+export type ComentarioInstagram = {
+  id: string;
+  text: string;
+  timestamp: string;
+  username?: string;
+  from?: { id: string; username?: string };
+};
+
+/** Los comentarios de una publicación, los más nuevos primero. */
+export async function comentariosDeMedia(
+  token: string,
+  mediaId: string,
+  limite = 100,
+): Promise<ComentarioInstagram[]> {
+  const { data } = await pedir<{ data: ComentarioInstagram[] }>(
+    `/${mediaId}/comments?fields=id,text,timestamp,username,from&limit=${limite}`,
+    token,
+  );
+  return data ?? [];
+}
+
+/** Responde en público, colgando del comentario. */
+export async function responderComentario(
+  token: string,
+  comentarioId: string,
+  texto: string,
+): Promise<{ id: string }> {
+  return pedir<{ id: string }>(`/${comentarioId}/replies`, token, {
+    method: "POST",
+    body: { message: texto },
+  });
+}
+
+/**
+ * El mensaje privado a quien comentó.
+ *
+ * Es la primitiva que Meta permite explícitamente para esto: se responde AL
+ * COMENTARIO, no a una persona, y por eso no hace falta que te haya escrito
+ * antes. Vale hasta 7 días después del comentario.
+ */
+export async function mensajePrivadoAlComentario(
+  token: string,
+  igUserId: string,
+  comentarioId: string,
+  texto: string,
+): Promise<{ message_id?: string }> {
+  return pedir<{ message_id?: string }>(`/${igUserId}/messages`, token, {
+    method: "POST",
+    body: {
+      recipient: { comment_id: comentarioId },
+      message: { text: texto },
+    },
+  });
+}
+
+/** Mensaje dentro de una conversación ya abierta, por el id de la persona. */
+export async function mensajeDirecto(
+  token: string,
+  igUserId: string,
+  destinatarioId: string,
+  texto: string,
+): Promise<{ message_id?: string }> {
+  return pedir<{ message_id?: string }>(`/${igUserId}/messages`, token, {
+    method: "POST",
+    body: {
+      recipient: { id: destinatarioId },
+      message: { text: texto },
+    },
+  });
+}
