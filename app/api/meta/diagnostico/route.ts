@@ -17,26 +17,27 @@ export const dynamic = "force-dynamic";
  * No devuelve el token, solo qué contesta cada sitio.
  */
 const PRUEBAS = (id: string) => [
+  // Instagram Login usa `user_id`, no `id`: si el campo no existe el error es
+  // el mismo que si la ruta estuviera mal, asi que hay que probarlo aparte.
   {
-    que: "graph.instagram.com /me",
-    url: `https://graph.instagram.com/me?fields=id,username`,
+    que: "/me user_id,username",
+    url: `https://graph.instagram.com/me?fields=user_id,username`,
+  },
+  { que: "/me sin fields", url: `https://graph.instagram.com/me?` },
+  {
+    que: "/me account_type",
+    url: `https://graph.instagram.com/me?fields=account_type`,
   },
   {
-    que: "graph.instagram.com v23 /me",
-    url: `https://graph.instagram.com/v23.0/me?fields=id,username`,
+    que: "v23 /me user_id",
+    url: `https://graph.instagram.com/v23.0/me?fields=user_id,username`,
   },
+  { que: "/me/media", url: `https://graph.instagram.com/me/media?fields=id` },
   {
-    que: "graph.facebook.com /me",
-    url: `https://graph.facebook.com/v23.0/me?fields=id,name`,
+    que: "por id, user_id",
+    url: `https://graph.instagram.com/${id}?fields=user_id,username`,
   },
-  {
-    que: "graph.instagram.com por id",
-    url: `https://graph.instagram.com/${id}?fields=id,username`,
-  },
-  {
-    que: "graph.facebook.com por id",
-    url: `https://graph.facebook.com/v23.0/${id}?fields=id,username`,
-  },
+  { que: "por id, sin fields", url: `https://graph.instagram.com/${id}?` },
 ];
 
 export async function GET() {
