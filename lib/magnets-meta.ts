@@ -413,7 +413,30 @@ export async function atenderMensaje(
     mensaje = `${mensaje}\n\n${fila.iman.resource}`;
   }
 
-  await mensajeDirecto(cuenta.token, cuenta.igUserId, igsid, mensaje);
+  /**
+   * Se guarda LO QUE SE MANDA, no solo que se mandó.
+   *
+   * Una entrega que Meta acepta con un 200 y que luego no aparece en el chat es
+   * indistinguible desde aquí de una que sí llegó. Sin el texto delante no hay
+   * forma de saber si el problema fue el envío o lo que se compuso.
+   */
+  const envio = await mensajeDirecto(
+    cuenta.token,
+    cuenta.igUserId,
+    igsid,
+    mensaje,
+  );
+  await db.insert(runLogs).values({
+    workflow: "iman",
+    level: "info",
+    message: `Recurso enviado a @${perfil.username ?? fila.contacto.username}`,
+    payload: {
+      igsid,
+      messageId: envio.message_id ?? null,
+      largo: mensaje.length,
+      texto: mensaje.slice(0, 500),
+    },
+  });
 
   /**
    * A partir de aquí es un lead, no un contacto de un imán.
