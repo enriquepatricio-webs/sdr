@@ -1,8 +1,5 @@
 import Link from 'next/link'
 import { cookies } from 'next/headers'
-import { and, eq, ne } from 'drizzle-orm'
-import { db } from '@/lib/db'
-import { accounts } from '@/lib/db/schema'
 import { COOKIE_EMPRESA } from '@/lib/empresa'
 import { listarWorkspaces } from '@/lib/workspace'
 import { Navegacion } from './navegacion'
@@ -21,25 +18,17 @@ import { CerrarSesion } from './cerrar-sesion'
  */
 async function leerMarco() {
   try {
-    const [empresas, galleta, instagram] = await Promise.all([
-      listarWorkspaces(),
-      cookies(),
-      db
-        .select({ id: accounts.id })
-        .from(accounts)
-        .where(and(eq(accounts.provider, 'instagram'), ne(accounts.status, 'disconnected')))
-        .limit(1),
-    ])
+    const [empresas, galleta] = await Promise.all([listarWorkspaces(), cookies()])
     const elegida = galleta.get(COOKIE_EMPRESA)?.value
     const actual = empresas.find((e) => e.id === elegida) ?? empresas[0] ?? null
-    return { empresas, actual, autopiloto: actual?.autopilot ?? false, hayInstagram: instagram.length > 0 }
+    return { empresas, actual, autopiloto: actual?.autopilot ?? false }
   } catch {
-    return { empresas: [], actual: null, autopiloto: false, hayInstagram: false }
+    return { empresas: [], actual: null, autopiloto: false }
   }
 }
 
 export default async function PanelLayout({ children }: { children: React.ReactNode }) {
-  const { empresas, actual, autopiloto, hayInstagram } = await leerMarco()
+  const { empresas, actual, autopiloto } = await leerMarco()
 
   return (
     <div className="min-h-screen">
@@ -54,7 +43,7 @@ export default async function PanelLayout({ children }: { children: React.ReactN
             SDR
           </Link>
 
-          <Navegacion hayInstagram={hayInstagram} />
+          <Navegacion />
 
           <div className="ml-auto flex items-center gap-4">
             {empresas.length > 1 && actual && (

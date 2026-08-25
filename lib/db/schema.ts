@@ -2,7 +2,6 @@ import { sql } from 'drizzle-orm'
 import {
   boolean,
   check,
-  primaryKey,
   foreignKey,
   index,
   integer,
@@ -904,28 +903,6 @@ export const magnetContacts = pgTable(
     uniqueIndex('magnet_contacts_comment_key')
       .on(t.commentId)
       .where(sql`${t.commentId} IS NOT NULL`),
-  ],
-)
-
-/**
- * Quién sigue a cada cuenta. Se refresca por lotes.
- *
- * Se guarda la lista entera y se consulta por índice, en vez de mirar a quién
- * sigue cada persona una por una: la comprobación individual cuesta una
- * ejecución de scraping por contacto y sale carísima en cuanto el imán funciona.
- */
-export const followers = pgTable(
-  'followers',
-  {
-    accountId: uuid('account_id')
-      .notNull()
-      .references(() => accounts.id, { onDelete: 'cascade' }),
-    username: text('username').notNull(),
-    seenAt: timestamp('seen_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [
-    primaryKey({ columns: [t.accountId, t.username] }),
-    index('followers_seen_idx').on(t.accountId, t.seenAt),
   ],
 )
 

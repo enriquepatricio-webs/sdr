@@ -11,7 +11,12 @@ export const dynamic = 'force-dynamic'
 /** Lo que hay que decidir para crear una campaña. El resto tiene un valor sensato. */
 const cuerpo = z.object({
   name: z.string().min(1, 'Ponle un nombre.'),
-  channel: z.enum(['linkedin', 'email', 'instagram']),
+  /**
+   * Instagram salió del producto: el canal sigue existiendo en la base porque
+   * el embudo del lead magnet vuelve cuando esté la app de Meta, pero no se
+   * puede crear una campaña nueva sobre él.
+   */
+  channel: z.enum(['linkedin', 'email']),
   accountId: z.string().uuid().nullable().optional(),
   icpId: z.string().uuid().nullable().optional(),
   workspaceId: z.string().uuid().optional(),

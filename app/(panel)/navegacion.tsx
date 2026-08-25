@@ -11,9 +11,6 @@ import { usePathname } from 'next/navigation'
  * los datos de la empresa siguen existiendo, pero se llega a ellos desde
  * Ajustes: son cosas que se tocan una vez, no todos los días, y tenerlas
  * siempre delante convertía el menú en un inventario.
- *
- * "Lead magnets" solo aparece si hay un Instagram conectado, porque sin él la
- * pantalla no puede hacer nada.
  */
 const RUTAS = [
   { href: '/', etiqueta: 'Panel' },
@@ -22,11 +19,9 @@ const RUTAS = [
   { href: '/settings', etiqueta: 'Ajustes' },
 ]
 
-export function Navegacion({ hayInstagram }: { hayInstagram: boolean }) {
+export function Navegacion() {
   const ruta = usePathname()
-  const rutas = hayInstagram
-    ? [...RUTAS.slice(0, 3), { href: '/magnets', etiqueta: 'Lead magnets' }, ...RUTAS.slice(3)]
-    : RUTAS
+  const rutas = RUTAS
 
   return (
     <nav className="flex flex-wrap items-center gap-1">

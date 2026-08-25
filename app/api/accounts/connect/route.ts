@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 const cuerpo = z.object({
-  proveedor: z.enum(['LINKEDIN', 'INSTAGRAM', 'GOOGLE', 'MICROSOFT']),
+  proveedor: z.enum(['LINKEDIN', 'GOOGLE', 'MICROSOFT']),
 })
 
 /**

@@ -204,15 +204,10 @@ export const SUPPORTED_ACTORS = {
     label: "Base de datos B2B (cargo, empresa y correo)",
     note: "Filtros de cargo, seniority, función, país y tamaño de empresa. Devuelve correo y LinkedIn.",
   },
-  instagram: {
-    actor: "apify/instagram-scraper",
-    label: "Búsqueda en Instagram",
-    note: "Busca por hashtag o por palabra clave y devuelve los perfiles que publican.",
-  },
   /**
    * Negocios locales de Google Maps. Es la ÚNICA fuente que devuelve direcciones
    * de correo, así que es la que alimenta las campañas de email: LinkedIn no da
-   * el correo de nadie e Instagram solo el de las cuentas de empresa.
+   * el correo de nadie.
    *
    * Con `scrapeContacts` entra en la web del negocio y saca de ahí el email.
    * Cuesta unos 0,006 $ por sitio (0,004 el sitio + 0,002 el contacto), así que
@@ -235,22 +230,21 @@ export const SUPPORTED_ACTORS = {
  */
 export type ProspectSource = keyof typeof SUPPORTED_ACTORS;
 
+/**
+ * El canal de una campaña como fuente de prospección, o null si no lo es.
+ *
+ * Existe por Instagram: el canal sigue en la base de datos —el embudo del lead
+ * magnet vuelve cuando esté la app de Meta— pero ya no hay dónde buscar, así
+ * que una campaña de Instagram no puede pedir leads. Devolver null en vez de
+ * romper deja que quien llama decida si eso es un error o simplemente algo que
+ * se salta.
+ */
+export function fuenteDeCanal(canal: string): ProspectSource | null {
+  return canal === "linkedin" || canal === "email" ? canal : null;
+}
+
 /** Actores de lectura rápida, para enriquecer antes de escribir. */
 export const ACTORES_LECTURA = {
   web: "apify/website-content-crawler",
   perfilLinkedin: "harvestapi/linkedin-profile-scraper",
-  perfilInstagram: "apify/instagram-profile-scraper",
-  /**
-   * Comentarios de una publicación o reel. Entrada: `directUrls` (array de
-   * URLs) y `resultsLimit`. Es el oficial de Apify y el más usado, que aquí
-   * importa más que ser barato: si el actor cambia de forma, el imán deja de
-   * detectar a nadie y no se entera nadie.
-   */
-  comentariosInstagram: "apify/instagram-comment-scraper",
-  /**
-   * Seguidores de una cuenta. Entrada: `usernames`, `dataToScrape: 'followers'`
-   * y `resultsLimit`. Se scrapea NUESTRA lista una vez y se cachea; mirar a
-   * quién sigue cada persona sería una ejecución por contacto.
-   */
-  seguidoresInstagram: "apify/instagram-followers-following-scraper",
 } as const;

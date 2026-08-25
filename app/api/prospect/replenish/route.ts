@@ -10,7 +10,7 @@ import {
 } from "@/lib/db/schema";
 import { jsonError, serverError } from "@/lib/api";
 import { OpenRouterError, SIN_SALDO } from "@/lib/openrouter";
-import { SUPPORTED_ACTORS, startRun } from "@/lib/apify";
+import { SUPPORTED_ACTORS, fuenteDeCanal, startRun } from "@/lib/apify";
 import { construirEntrada, traducirIcpAFiltros } from "@/lib/prospect";
 import { barrerBusquedasPendientes } from "@/lib/prospect-ingest";
 import { planificarReabastecimiento } from "@/lib/replenish";
@@ -285,34 +285,15 @@ async function lanzarPara(
     const campana = estados.find((c) => c.id === objetivo.id);
     if (!campana) continue;
     /**
-     * El canal decide la fuente, con una excepción medida.
+     * El canal decide la fuente. Para el correo solo sirve Google Maps, que es
+     * lo único que devuelve una dirección; para LinkedIn, LinkedIn.
      *
-     * Para el correo solo sirve Google Maps, que es lo único que devuelve una
-     * dirección. Para LinkedIn, LinkedIn. Y para Instagram las dos, alternando:
-     * la búsqueda nativa por hashtag va bien cuando el ICP es un tipo de negocio
-     * reconocible —restaurantes— y trae ruido cuando es amplio (7 candidatos y
-     * ninguno válido buscando "cualquier empresa"). Maps, en cambio, da negocios
-     * verificados Y su @usuario de Instagram, sacado de su propia web.
-     *
-     * Alternar sale más barato que elegir bien: cada vuelta prueba la otra, y la
-     * que funcione llenará la campaña. Se mira qué se usó la última vez para
-     * esta campaña, así que no hace falta guardar nada.
+     * Una campaña de Instagram no tiene fuente: el canal sigue existiendo en la
+     * base porque el lead magnet vuelve con la app de Meta, pero ya no hay
+     * dónde buscar. Se salta en silencio en vez de reventar la vuelta entera.
      */
-    let fuente: typeof campana.channel = campana.channel;
-    if (campana.channel === "instagram") {
-      const [ultima] = await db
-        .select({ source: prospectSearches.source })
-        .from(prospectSearches)
-        .where(
-          and(
-            eq(prospectSearches.campaignId, campana.id),
-            eq(prospectSearches.origin, "automatica"),
-          ),
-        )
-        .orderBy(desc(prospectSearches.createdAt))
-        .limit(1);
-      fuente = ultima?.source === "instagram" ? "email" : "instagram";
-    }
+    const fuente = fuenteDeCanal(campana.channel);
+    if (!fuente) continue;
 
     const [icp] = await db
       .select()

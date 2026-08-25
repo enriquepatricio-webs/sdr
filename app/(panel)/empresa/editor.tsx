@@ -32,7 +32,6 @@ const entrada =
 
 const CANALES = [
   { id: 'LINKEDIN', etiqueta: 'LinkedIn', proveedor: 'linkedin' },
-  { id: 'INSTAGRAM', etiqueta: 'Instagram', proveedor: 'instagram' },
   { id: 'GOOGLE', etiqueta: 'Gmail', proveedor: 'email' },
 ] as const
 

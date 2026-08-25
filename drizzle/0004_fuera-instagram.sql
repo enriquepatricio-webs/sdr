@@ -1,0 +1,12 @@
+-- Instagram sale del producto: los DMs iban por Unipile y los comentarios y
+-- seguidores por Apify, y todo eso está borrado.
+--
+-- `followers` era caché puro del scraping de nuestra lista de seguidores: se
+-- reconstruía entera en cada refresco, así que no hay nada que perder. Y con
+-- Meta no vuelve, porque su API no deja consultar si alguien concreto te sigue.
+--
+-- Lo que NO se toca a propósito: el valor 'instagram' del enum `channel` y las
+-- tablas `lead_magnets` y `magnet_contacts`. Ahí viven las palabras clave, los
+-- posts y el embudo de cada contacto, que es justo lo que reutiliza la versión
+-- con la app de Meta.
+DROP TABLE "followers" CASCADE;

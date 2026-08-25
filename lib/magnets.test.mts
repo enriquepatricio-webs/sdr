@@ -16,8 +16,6 @@ import {
   PASO_DE_ESTADO,
   PASO_RECORDATORIO,
   RECORDATORIO_FOLLOW,
-  SEGUIDORES_FRESCOS_MIN,
-  SEGUIDORES_FRESCOS_SI_CONTESTAN_MIN,
   TRANSICIONES,
   comentariosConLaClave,
   minutosEntreLecturas,
@@ -261,14 +259,6 @@ test("el rato hasta el «que tal» es fijo por persona y distinto entre personas
 
   // Preguntar "que te ha parecido" a los dos minutos delata al robot.
   assert.ok(NUDGE_MIN_MINUTOS >= 30);
-});
-
-test("a quien contesta se le mira la lista de seguidores de verdad", () => {
-  // Seis horas de caché son un ahorro sensato para quien no ha dicho nada, y
-  // una promesa rota para quien acaba de escribir "ya está" esperando algo
-  // que le hemos prometido "ahora mismo".
-  assert.ok(SEGUIDORES_FRESCOS_SI_CONTESTAN_MIN < SEGUIDORES_FRESCOS_MIN);
-  assert.ok(SEGUIDORES_FRESCOS_SI_CONTESTAN_MIN >= 1);
 });
 
 test("los textos del imán no pueden llevar cifras de dinero", () => {

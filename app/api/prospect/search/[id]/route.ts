@@ -3,7 +3,7 @@ import { and, asc, desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { prospectSearches, prospects } from "@/lib/db/schema";
 import { jsonError, serverError } from "@/lib/api";
-import { getRun, isFinished } from "@/lib/apify";
+import { fuenteDeCanal, getRun, isFinished } from "@/lib/apify";
 import { ingerir } from "@/lib/prospect-ingest";
 
 export const dynamic = "force-dynamic";
@@ -75,7 +75,9 @@ export async function GET(
             id,
             busqueda.icpId,
             busqueda.workspaceId,
-            busqueda.source,
+            // Búsquedas viejas de Instagram: la fuente ya no existe, pero sus
+            // resultados siguen guardados y no hay motivo para perderlos.
+            fuenteDeCanal(busqueda.source) ?? "email",
             run.defaultDatasetId,
             run.costUsd,
           );

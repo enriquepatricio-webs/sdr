@@ -62,7 +62,7 @@ export function Prospeccion({
 }) {
   const router = useRouter()
 
-  const [source, setSource] = useState<'linkedin' | 'instagram'>('linkedin')
+  const [source, setSource] = useState<'linkedin' | 'email'>('linkedin')
   const [icpId, setIcpId] = useState(icps[0]?.id ?? '')
   const [nombre, setNombre] = useState('')
   const [brief, setBrief] = useState('')
@@ -177,7 +177,7 @@ export function Prospeccion({
           <h2 className="etiqueta">Nueva búsqueda</h2>
 
           <div className="mt-3 flex gap-2">
-            {(['linkedin', 'instagram'] as const).map((s) => (
+            {(['linkedin', 'email'] as const).map((s) => (
               <button
                 key={s}
                 type="button"

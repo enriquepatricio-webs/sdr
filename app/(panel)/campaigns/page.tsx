@@ -4,7 +4,7 @@ import { db } from '@/lib/db'
 import { accounts, campaigns, leads } from '@/lib/db/schema'
 import { dentroDeVentana } from '@/lib/sending-window'
 import { workspaceActivo } from '@/lib/workspace'
-import { NuevaCampana } from './nueva'
+import { NuevaCampana, type Cuenta } from './nueva'
 
 export const dynamic = 'force-dynamic'
 
@@ -37,7 +37,15 @@ export default async function PaginaCampanas() {
             provider: accounts.provider,
           })
           .from(accounts)
-          .where(and(eq(accounts.workspaceId, empresa.id), ne(accounts.status, 'disconnected')))
+          // Instagram fuera: el canal sigue en la base para cuando vuelva el
+          // lead magnet con la app de Meta, pero no se crean campañas nuevas.
+          .where(
+            and(
+              eq(accounts.workspaceId, empresa.id),
+              ne(accounts.status, 'disconnected'),
+              ne(accounts.provider, 'instagram'),
+            ),
+          )
           .orderBy(asc(accounts.createdAt))
       : Promise.resolve([]),
   ])
@@ -51,7 +59,9 @@ export default async function PaginaCampanas() {
           <p className="etiqueta">Campañas</p>
           <h1 className="mt-1 text-3xl font-semibold tracking-tight">{filas.length} campañas</h1>
         </div>
-        <NuevaCampana cuentas={cuentas} />
+        <NuevaCampana
+          cuentas={cuentas.filter((c) => c.provider !== 'instagram') as Cuenta[]}
+        />
       </header>
 
       {filas.length === 0 ? (

@@ -8,7 +8,7 @@
  * nadie abría el navegador: no llegaban leads, la campaña seguía vacía, y el
  * reabastecimiento pagaba otra búsqueda cada 30 minutos para nada.
  */
-import { and, asc, desc, eq, gte, isNotNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, gte, isNotNull, sql } from "drizzle-orm";
 import { db } from "./db";
 import {
   campaigns,
@@ -22,6 +22,7 @@ import {
 } from "./db/schema";
 import {
   type ProspectSource,
+  fuenteDeCanal,
   getDatasetItems,
   getRun,
   isFinished,
@@ -329,7 +330,9 @@ export async function barrerBusquedasPendientes(limite = 5): Promise<{
         busqueda.id,
         busqueda.icpId,
         busqueda.workspaceId,
-        busqueda.source,
+        // Búsquedas viejas de Instagram: la fuente ya no existe, pero sus
+        // resultados siguen guardados y no hay motivo para perderlos.
+        fuenteDeCanal(busqueda.source) ?? "email",
         run.defaultDatasetId,
         run.costUsd,
       );

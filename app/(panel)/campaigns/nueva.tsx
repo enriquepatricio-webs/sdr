@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
-type Cuenta = { id: string; displayName: string; provider: 'linkedin' | 'email' | 'instagram' }
+export type Cuenta = { id: string; displayName: string; provider: 'linkedin' | 'email' }
 
 /** Mismo aspecto que el resto de formularios: se comparte el string, no el CSS. */
 const entrada =
@@ -12,7 +12,6 @@ const boton = 'bg-tinta px-4 py-2.5 text-sm font-semibold text-lienzo disabled:o
 
 const CANAL: Record<Cuenta['provider'], string> = {
   linkedin: 'LinkedIn',
-  instagram: 'Instagram',
   email: 'Email',
 }
 
@@ -20,9 +19,9 @@ const CANAL: Record<Cuenta['provider'], string> = {
  * Crear una campaña. Solo pide lo que no se puede adivinar: cómo se llama y
  * desde qué cuenta sale.
  *
- * El canal lo decide la cuenta, no un desplegable aparte: elegir "Instagram" y
- * una cuenta de LinkedIn era un error que solo aparecía al guardar, traducido
- * desde una clave ajena de Postgres.
+ * El canal lo decide la cuenta, no un desplegable aparte: elegir un canal y
+ * una cuenta de otro era un error que solo aparecía al guardar, traducido desde
+ * una clave ajena de Postgres.
  */
 export function NuevaCampana({ cuentas }: { cuentas: Cuenta[] }) {
   const router = useRouter()

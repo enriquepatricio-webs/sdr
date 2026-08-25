@@ -231,7 +231,6 @@ const SCHEMA_MAPS = {
 
 const SCHEMAS = {
   linkedin: SCHEMA_LINKEDIN,
-  instagram: SCHEMA_INSTAGRAM,
   email: SCHEMA_MAPS,
 } as const satisfies Record<ProspectSource, unknown>;
 
@@ -422,10 +421,6 @@ export function construirEntrada(
           : ["Spain"],
     };
   }
-  if (fuente === "instagram") {
-    return { ...filtros, resultsType: "details", searchLimit: maxItems };
-  }
-
   // Google Maps cuenta el tope POR TÉRMINO de búsqueda, no en total. Con cuatro
   // términos, pedir 50 traería 200 sitios y cuadruplicaría la factura sin que
   // nadie lo hubiese decidido. Se reparte el presupuesto entre los términos.

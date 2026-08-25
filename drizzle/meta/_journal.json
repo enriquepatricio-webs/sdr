@@ -29,6 +29,13 @@
       "when": 1787518794526,
       "tag": "0003_imanes-handle-intentos-y-lectura",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1787646215183,
+      "tag": "0004_fuera-instagram",
+      "breakpoints": true
     }
   ]
 }

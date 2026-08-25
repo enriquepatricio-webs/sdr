@@ -104,7 +104,6 @@ async function main() {
     assert.deepEqual([...names].sort(), [
       'accounts',
       'campaigns',
-      'followers',
       'icps',
       'lead_magnets',
       'leads',

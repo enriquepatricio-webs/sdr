@@ -98,28 +98,6 @@ export async function leerPerfilLinkedin(url: string): Promise<LecturaPerfil | n
   }
 }
 
-export async function leerPerfilInstagram(usuario: string): Promise<LecturaPerfil | null> {
-  try {
-    const items = await runSync<Record<string, any>>(
-      ACTORES_LECTURA.perfilInstagram,
-      { usernames: [usuario.replace(/^@/, '')] },
-      { maxItems: 1, timeoutSecs: 90 },
-    )
-    const p = items[0]
-    if (!p) return null
-    const partes = [
-      p.fullName && `Nombre: ${p.fullName}`,
-      p.biography && `Bio: ${recortar(String(p.biography), 600)}`,
-      p.followersCount && `Seguidores: ${p.followersCount}`,
-      p.businessCategoryName && `Categoría: ${p.businessCategoryName}`,
-      p.externalUrl && `Web: ${p.externalUrl}`,
-    ].filter(Boolean)
-    if (!partes.length) return null
-    return { texto: partes.join('\n'), datos: p }
-  } catch {
-    return null
-  }
-}
 
 /**
  * Adivina la web de una empresa a partir de su nombre.

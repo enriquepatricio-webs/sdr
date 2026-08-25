@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { type Enrichment, leads, runLogs } from '@/lib/db/schema'
 import { jsonError, serverError } from '@/lib/api'
-import { dominioProbable, leerPerfilInstagram, leerPerfilLinkedin, leerWeb } from '@/lib/scrape'
+import { dominioProbable, leerPerfilLinkedin, leerWeb } from '@/lib/scrape'
 import { getSettings } from '@/lib/settings'
 
 export const dynamic = 'force-dynamic'
@@ -56,12 +56,6 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
       if (perfil) {
         trozos.push(`PERFIL:\n${perfil.texto}`)
         fuentes.push(lead.linkedinUrl)
-      }
-    } else if (lead.instagramUsername) {
-      const perfil = await leerPerfilInstagram(lead.instagramUsername)
-      if (perfil) {
-        trozos.push(`PERFIL:\n${perfil.texto}`)
-        fuentes.push(`instagram.com/${lead.instagramUsername}`)
       }
     }
 

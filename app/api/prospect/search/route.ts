@@ -34,7 +34,7 @@ export async function GET() {
 
 const cuerpo = z.object({
   icpId: z.string().uuid(),
-  source: z.enum(['linkedin', 'instagram', 'email']),
+  source: z.enum(['linkedin', 'email']),
   name: z.string().min(1),
   brief: z.string().max(2000).optional(),
   /** Tope de gasto. Lo pone la persona, nunca el modelo. */
