@@ -1,7 +1,9 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
+import { and, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { runLogs } from "@/lib/db/schema";
+import { accounts, leadMagnets, runLogs } from "@/lib/db/schema";
+import { atenderComentarios } from "@/lib/magnets-meta";
 
 export const dynamic = "force-dynamic";
 
@@ -54,9 +56,26 @@ export async function GET(request: Request) {
  */
 type Veredicto = { vale: boolean; motivo: string; calculada?: string };
 
+/**
+ * Los dos secretos que puede estar usando Meta.
+ *
+ * El webhook vive dentro del producto Instagram, que tiene su PROPIA clave,
+ * distinta de la de la app padre. Cuál de las dos firma no está claro en su
+ * documentación y el error es idéntico en los dos casos, así que se prueban las
+ * dos: son nuestras las dos, y aceptar la que cuadre no debilita nada.
+ */
+function secretos(): string[] {
+  return [process.env.META_APP_SECRET, process.env.INSTAGRAM_APP_SECRET].filter(
+    (s): s is string => Boolean(s),
+  );
+}
+
 function firmaValida(crudo: string, cabecera: string | null): Veredicto {
-  const secreto = process.env.META_APP_SECRET;
-  if (!secreto) return { vale: false, motivo: "no hay META_APP_SECRET" };
+  const todos = secretos();
+  if (todos.length === 0) {
+    return { vale: false, motivo: "no hay ningún secreto configurado" };
+  }
+  const secreto = todos[0];
   if (!cabecera) {
     return { vale: false, motivo: "la petición no trae x-hub-signature-256" };
   }
@@ -64,19 +83,60 @@ function firmaValida(crudo: string, cabecera: string | null): Veredicto {
     return { vale: false, motivo: `la firma no empieza por sha256=` };
   }
 
-  const esperada = createHmac("sha256", secreto).update(crudo).digest();
   const recibida = Buffer.from(cabecera.slice("sha256=".length), "hex");
-  if (recibida.length !== esperada.length) {
+  if (recibida.length !== 32) {
     return { vale: false, motivo: "la firma no mide 32 bytes" };
   }
-  if (!timingSafeEqual(recibida, esperada)) {
-    return {
-      vale: false,
-      motivo: "la firma no cuadra con el secreto",
-      calculada: esperada.toString("hex"),
-    };
+  for (const s of todos) {
+    const esperada = createHmac("sha256", s).update(crudo).digest();
+    if (timingSafeEqual(recibida, esperada))
+      return { vale: true, motivo: "ok" };
   }
-  return { vale: true, motivo: "ok" };
+  return {
+    vale: false,
+    motivo: "la firma no cuadra con ninguno de los secretos",
+    calculada: createHmac("sha256", secreto).update(crudo).digest("hex"),
+  };
+}
+
+type PayloadMeta = { entry?: { changes?: { field?: string }[] }[] };
+
+/**
+ * Atiende los imanes encendidos de las cuentas autorizadas.
+ *
+ * No se busca el imán exacto del evento a propósito: `atenderComentarios` relee
+ * y deduplica por su cuenta, así que pasarle de más no manda nada de más, y a
+ * cambio no hay que casar identificadores de media que Meta nombra de tres
+ * formas distintas.
+ */
+async function atenderTodosLosImanes(): Promise<void> {
+  try {
+    const imanes = await db
+      .select({ id: leadMagnets.id })
+      .from(leadMagnets)
+      .innerJoin(accounts, eq(accounts.id, leadMagnets.accountId))
+      .where(and(eq(leadMagnets.active, true), isNotNull(accounts.metaToken)));
+
+    for (const iman of imanes) {
+      const r = await atenderComentarios(iman.id, { ensayo: false });
+      if (r.error) {
+        await db.insert(runLogs).values({
+          workflow: "iman",
+          level: "warn",
+          message: `El imán no pudo atender el comentario: ${r.error}`,
+          payload: { magnetId: iman.id },
+        });
+      }
+    }
+  } catch (err) {
+    await db.insert(runLogs).values({
+      workflow: "iman",
+      level: "error",
+      message: `Falló atender un comentario entrante: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    });
+  }
 }
 
 export async function POST(request: Request) {
@@ -153,6 +213,22 @@ export async function POST(request: Request) {
     message: "Evento de Meta recibido",
     payload: payload as Record<string, unknown>,
   });
+
+  /**
+   * Un comentario nuevo se atiende AHORA.
+   *
+   * Es la razón de ser de todo esto: Meta avisa, y el recurso sale en segundos
+   * en vez de esperar a que un cron pase a preguntar. Se lanza sin esperar
+   * porque Meta reintenta lo que no conteste 200 deprisa, y un reintento
+   * mientras aún estamos escribiendo sería el mismo DM dos veces.
+   */
+  const cambios = (payload as PayloadMeta)?.entry ?? [];
+  const hayComentario = cambios.some((e) =>
+    (e.changes ?? []).some((c) => c.field === "comments"),
+  );
+  if (hayComentario) {
+    void atenderTodosLosImanes();
+  }
 
   // Meta reintenta lo que no conteste 200 rápido, así que se responde antes de
   // hacer nada más. Lo que haya que procesar se procesa desde lo guardado.

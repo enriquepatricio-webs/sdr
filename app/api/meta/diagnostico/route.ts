@@ -7,27 +7,14 @@ import { serverError } from "@/lib/api";
 export const dynamic = "force-dynamic";
 
 /**
- * Qué acepta de verdad el token que nos ha dado Meta.
+ * Qué deja hacer de verdad el token, probado contra datos reales.
  *
- * Su documentación dice una cosa y su API responde otra: el mismo
- * "Unsupported request - method type: get" sale tanto si la ruta está mal como
- * si el token es de otro tipo, y desde fuera no se distinguen. Probar varias
- * rutas con el token REAL y comparar los errores es lo único que lo separa.
- *
- * No devuelve el token, solo qué contesta cada sitio.
+ * La documentación de Meta dice una cosa y su API responde otra, y el mismo
+ * error sale por motivos distintos. Probar con el token y los datos de verdad
+ * es lo único que lo aclara. No devuelve el token, solo qué contesta cada sitio.
  */
-const PRUEBAS = (id: string) => [
-  {
-    que: "perfil",
-    url: `https://graph.instagram.com/me?fields=user_id,username`,
-  },
-  {
-    que: "publicaciones",
-    url: `https://graph.instagram.com/me/media?fields=id,permalink,media_type,timestamp&limit=25`,
-  },
-];
-
-export async function GET() {
+export async function GET(request: Request) {
+  const url = new URL(request.url);
   try {
     const [cuenta] = await db
       .select()
@@ -36,36 +23,43 @@ export async function GET() {
         and(eq(accounts.provider, "instagram"), isNotNull(accounts.metaToken)),
       )
       .limit(1);
-
     if (!cuenta?.metaToken) {
       return NextResponse.json(
-        { error: "Ninguna cuenta tiene token todavía." },
+        { error: "Ninguna cuenta autorizada." },
         { status: 404 },
       );
     }
-
-    const resultados = [];
-    for (const p of PRUEBAS(cuenta.igUserId ?? "me")) {
+    const t = cuenta.metaToken;
+    const G = "https://graph.instagram.com";
+    const leer = async (ruta: string) => {
       const res = await fetch(
-        `${p.url}&access_token=${encodeURIComponent(cuenta.metaToken)}`,
-        {
-          cache: "no-store",
-        },
+        `${G}${ruta}${ruta.includes("?") ? "&" : "?"}access_token=${encodeURIComponent(t)}`,
+        { cache: "no-store" },
       );
-      const texto = await res.text();
-      resultados.push({
-        que: p.que,
-        estado: res.status,
-        respuesta: texto.slice(0, 1800),
+      return { estado: res.status, cuerpo: (await res.text()).slice(0, 700) };
+    };
+
+    // Quien comentó de verdad, para poder preguntar por él.
+    const personaId = url.searchParams.get("persona");
+    if (personaId) {
+      return NextResponse.json({
+        persona: personaId,
+        seguimiento: await leer(
+          `/${personaId}?fields=name,username,is_user_follow_business,is_business_follow_user`,
+        ),
       });
     }
 
+    const media = await leer("/me/media?fields=id,permalink&limit=5");
+    const primera = JSON.parse(media.cuerpo).data?.[0]?.id;
+    const comentarios = primera
+      ? await leer(`/${primera}/comments?fields=id,text,username,from&limit=10`)
+      : { estado: 0, cuerpo: "sin publicaciones" };
+
     return NextResponse.json({
-      cuenta: cuenta.displayName,
-      igUserId: cuenta.igUserId,
-      caduca: cuenta.metaTokenExpiresAt,
-      largoDelToken: cuenta.metaToken.length,
-      resultados,
+      cuenta: cuenta.instagramUsername,
+      media,
+      comentarios,
     });
   } catch (err) {
     return serverError(err, "No se pudo diagnosticar");
