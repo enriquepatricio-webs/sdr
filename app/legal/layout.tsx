@@ -15,11 +15,26 @@ export default function LegalLayout({
       <article className="space-y-5 text-[15px] leading-relaxed">
         {children}
       </article>
-      <footer className="mt-16 border-t border-linea pt-6 text-sm text-tenue">
-        The Coto Company ·{" "}
-        <a className="underline" href="mailto:enrique@thecotocompany.com">
-          enrique@thecotocompany.com
-        </a>
+      <footer className="mt-16 space-y-2 border-t border-linea pt-6 text-sm text-tenue">
+        {/* Enlazadas entre sí: un revisor llega a una y tiene que poder ver las
+            otras dos sin volver al formulario de Meta a buscarlas. */}
+        <nav className="flex flex-wrap gap-4">
+          <a className="underline" href="/legal/privacidad">
+            Privacidad
+          </a>
+          <a className="underline" href="/legal/terminos">
+            Condiciones
+          </a>
+          <a className="underline" href="/legal/eliminar-datos">
+            Eliminación de datos
+          </a>
+        </nav>
+        <p>
+          The Coto Company ·{" "}
+          <a className="underline" href="mailto:enrique@thecotocompany.com">
+            enrique@thecotocompany.com
+          </a>
+        </p>
       </footer>
     </div>
   );

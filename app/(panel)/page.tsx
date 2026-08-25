@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { and, count, eq, gte, sql } from "drizzle-orm";
+import { and, count, eq, gte, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   accounts,
@@ -173,7 +173,19 @@ export default async function Panel() {
         touches,
         and(eq(touches.leadId, leads.id), gte(touches.createdAt, hace30dias)),
       )
-      .where(deLaEmpresa)
+      /**
+       * Las campañas de Instagram no salen: Instagram ya no es un canal en
+       * frío.
+       *
+       * Las cuatro que había iban por Unipile y están paradas desde que el
+       * producto pasó a la API de Meta. Dejarlas en la tabla es enseñar cada
+       * día una fila de fallos de algo que ya no existe, y eso enseña a ignorar
+       * la columna de fallos entera —justo la que sí importa en LinkedIn.
+       *
+       * No se borran: sus leads son contactos reales y su historial explica de
+       * dónde vienen las conversaciones abiertas.
+       */
+      .where(and(deLaEmpresa, ne(campaigns.channel, "instagram")))
       .groupBy(
         campaigns.id,
         campaigns.name,
