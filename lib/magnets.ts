@@ -81,14 +81,20 @@ function escapar(s: string): string {
  * Tolerante a que vaya dentro de una frase, con emojis o con signos pegados,
  * pero NO a que sea parte de otra palabra: con la clave "guia", "guiado" no
  * cuenta. Quien comenta otra cosa no ha pedido nada y no se le escribe.
+ *
+ * Sí se acepta el plural. "SISTEMAS" cuando la palabra es "SISTEMA" es alguien
+ * que ha copiado mal lo que vio en el vídeo, no alguien hablando de otra cosa,
+ * y dejarle sin respuesta por una letra sería absurdo. Es la única flexión que
+ * se admite: cualquier otra terminación ya es otra palabra.
  */
 export function mencionaClave(texto: string, clave: string): boolean {
   const c = normalizar(clave).trim();
   if (!c) return false;
   const borde = "[^\\p{L}\\p{N}]";
-  return new RegExp(`(?:^|${borde})${escapar(c)}(?:${borde}|$)`, "u").test(
-    normalizar(texto),
-  );
+  return new RegExp(
+    `(?:^|${borde})${escapar(c)}(?:e?s)?(?:${borde}|$)`,
+    "u",
+  ).test(normalizar(texto));
 }
 
 /**

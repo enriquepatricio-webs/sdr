@@ -573,7 +573,35 @@ export async function atenderMensaje(
     }
   }
 
-  if (!fila) return { atendido: false, que: "no es de ningún imán" };
+  if (!fila) {
+    /**
+     * Nadie sabe quién es, pero escribió a una cuenta con un imán encendido.
+     *
+     * No se le contesta automáticamente: a estas cuentas les escribe todo el
+     * mundo y responder a cualquier cosa es peor que no responder. Pero sí
+     * queda anotado, porque con una publicación viva esto suele ser alguien que
+     * vio el vídeo y escribió a su manera —"me interesa", "cómo lo consigo"— y
+     * esa persona merece que alguien la lea. Sin esta línea, no existía.
+     */
+    if (igUserId) {
+      const conIman = await db
+        .select({ id: leadMagnets.id })
+        .from(leadMagnets)
+        .innerJoin(accounts, eq(accounts.id, leadMagnets.accountId))
+        .where(
+          and(eq(accounts.igUserId, igUserId), eq(leadMagnets.active, true)),
+        );
+      if (conIman.length) {
+        await db.insert(runLogs).values({
+          workflow: "iman",
+          level: "info",
+          message: "Alguien escribió al privado sin decir la palabra del imán.",
+          payload: { igsid, texto: texto.slice(0, 300) },
+        });
+      }
+    }
+    return { atendido: false, que: "no es de ningún imán" };
+  }
 
   // Si pidió que le dejaran en paz, se para aquí y no recibe nada más.
   if (pideQueLeDejen(texto)) {
