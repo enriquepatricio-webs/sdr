@@ -210,7 +210,19 @@ export function construirSystemPrompt(
       ].join("\n")
     : "";
 
-  const sobreEste = contexto.enriquecimiento?.resumen ?? "";
+/**
+   * También se le quitan las cifras de dinero a lo del PROSPECTO.
+   *
+   * Ya se hacía con nuestra web y con nuestra oferta, pero no con esto, y este
+   * texto sale de scrapear la web del prospecto: "oficina virtual desde 90€/mes".
+   * El agente lo leía, lo repetía en el mensaje para demostrar que se había
+   * informado —que es exactamente lo que le pedimos— y el filtro de salida
+   * tumbaba el mensaje. El precio ni siquiera era nuestro.
+   *
+   * Bloquear en la puerta y no antes gasta un turno del modelo por cada intento,
+   * y un lead se queda sin primer mensaje hasta que alguna reescritura acierta.
+   */
+  const sobreEste = sinCifrasDeDinero(contexto.enriquecimiento?.resumen ?? "");
 
   /**
    * El primer mensaje de LinkedIn no es un mensaje: es la nota de una
