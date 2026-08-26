@@ -490,6 +490,24 @@ export async function atenderMensaje(
       .where(condicion);
 
   /**
+   * Lo PRIMERO: ¿está diciendo la palabra de algún imán?
+   *
+   * Va antes que la búsqueda por identificador y no después, y la diferencia
+   * importa cuando una cuenta tiene dos imanes. Quien ya recibió el primero
+   * tiene ficha, así que la búsqueda por identificador la encontraba, veía que
+   * ya estaba entregada y mandaba la conversación al agente: pedía el segundo
+   * recurso y le contestaba un comercial. Preguntando primero por la palabra,
+   * cada mensaje se resuelve contra el imán que esa persona está nombrando.
+   *
+   * Si no nombra ninguno, no hace nada y siguen las búsquedas de siempre.
+   */
+  let fila: Fila | undefined;
+  if (igUserId && !pideQueLeDejen(texto)) {
+    fila =
+      (await fichaPorPalabraEnMensaje(igsid, texto, igUserId)) ?? undefined;
+  }
+
+  /**
    * Primero acotando por la cuenta, y si no sale, sin acotar.
    *
    * El filtro por cuenta es lo correcto, pero depende de que el identificador
@@ -502,14 +520,15 @@ export async function atenderMensaje(
    * Así que se reintenta sin el filtro y el sistema sigue funcionando mientras
    * el identificador se corrige solo en la siguiente autorización.
    */
-  let [fila] = igUserId
-    ? await buscar(
-        and(
-          eq(magnetContacts.providerId, igsid),
-          eq(accounts.igUserId, igUserId),
-        )!,
-      )
-    : [];
+  if (!fila)
+    [fila] = igUserId
+      ? await buscar(
+          and(
+            eq(magnetContacts.providerId, igsid),
+            eq(accounts.igUserId, igUserId),
+          )!,
+        )
+      : [];
   if (!fila) [fila] = await buscar(eq(magnetContacts.providerId, igsid));
 
   /**
@@ -552,17 +571,6 @@ export async function atenderMensaje(
         }
       }
     }
-  }
-
-  /**
-   * Nadie lo conoce todavía: puede que esté pidiendo la palabra por privado.
-   *
-   * Se mira después de las búsquedas por identificador y por nombre, para no
-   * volver a entregar el recurso a quien ya lo tiene, y solo si no está
-   * pidiendo que le dejen en paz —eso siempre gana.
-   */
-  if (!fila && igUserId && !pideQueLeDejen(texto)) {
-    fila = (await fichaPorPalabraEnMensaje(igsid, texto, igUserId)) ?? fila;
   }
 
   if (!fila) return { atendido: false, que: "no es de ningún imán" };
@@ -631,7 +639,10 @@ export async function atenderMensaje(
         workflow: "iman",
         level: "warn",
         message: `No se pudo comprobar si @${fila.contacto.username} sigue a la cuenta: se le contesta como si no.`,
-        payload: { igsid, error: err instanceof Error ? err.message : String(err) },
+        payload: {
+          igsid,
+          error: err instanceof Error ? err.message : String(err),
+        },
       });
       return { id: igsid } as PerfilDeQuienEscribe;
     },
