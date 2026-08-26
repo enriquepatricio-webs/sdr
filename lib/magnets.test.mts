@@ -8,6 +8,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  PEDIR_FOLLOW_SIN_SABER,
   faltaElRecurso,
   COMENTARIOS_POR_RELECTURA,
   NUDGE_MAX_MINUTOS,
@@ -361,4 +362,31 @@ test("no se pega el recurso otra vez si el enlace ya está", () => {
   // más y las mayúsculas no lo invalidan.
   assert.equal(faltaElRecurso("Te paso el   CÓDIGO: ABC-123", "código: abc-123"), false);
   assert.equal(faltaElRecurso("Te paso el código", "código: abc-123"), true);
+});
+
+/**
+ * Meta NO deja saber si alguien te sigue mientras solo haya comentado.
+ *
+ * Responde 230 "User consent is required": el permiso para leer su perfil nace
+ * cuando esa persona te escribe. Comprobado con comentaristas reales — los
+ * unicos que devuelven 200 son los que ya te habian escrito alguna vez.
+ *
+ * Por eso el primer mensaje no puede afirmar que no te sigue. Se le dijo a
+ * alguien que si seguia la cuenta, y eso delata al instante que no hay nadie
+ * detras. El texto de "no se sabe" tiene que valer en los dos casos.
+ */
+test("el mensaje de no-se-sabe no afirma que no te siguen", () => {
+  const t = PEDIR_FOLLOW_SIN_SABER.toLowerCase();
+
+  // Nada que de por hecho que todavia no sigue.
+  for (const afirmacion of ["no me sigues", "todavia no", "todavía no", "aun no", "aún no"]) {
+    assert.ok(!t.includes(afirmacion), `afirma "${afirmacion}" sin saberlo`);
+  }
+
+  // Y tiene que darle salida a quien YA sigue, que es el caso que fallaba.
+  assert.match(t, /si ya lo haces|si ya me sigues|si ya la sigues/);
+
+  // Pedir que conteste no es un adorno: contestar es lo unico que desbloquea
+  // la comprobacion en Meta.
+  assert.match(t, /resp[oó]nd|escrib|contest/);
 });

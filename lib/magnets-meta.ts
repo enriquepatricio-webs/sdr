@@ -15,13 +15,13 @@ import {
   mensajeDirecto,
   mensajePrivadoAlComentario,
   perfilDeQuienEscribe,
-  type PerfilDeQuienEscribe,
   responderComentario,
   sesionInvalidada,
 } from "./instagram";
 import {
   MAX_PETICIONES_DE_FOLLOW,
   RECORDATORIO_FOLLOW,
+  PEDIR_FOLLOW_SIN_SABER,
   RESPUESTA_PUBLICA,
   SIN_MAS_RECORDATORIOS,
   comentariosConLaClave,
@@ -145,30 +145,33 @@ export async function atenderComentarios(
     const quienEsId = idDe.get(c.commentId!) ?? null;
 
     /**
-     * Lo primero es mirar si ya te sigue. Antes de pedirle nada.
+     * Se intenta saber si ya te sigue, y muchas veces NO se puede.
      *
-     * Estaba al revés: se pedía el follow a todo el mundo y se comprobaba
-     * después, cuando contestaban. La razón que se daba era que Meta responde
-     * 230 "User consent is required" hasta que esa persona te escribe.
+     * Meta responde 230 "User consent is required" cuando esa persona solo ha
+     * comentado: el consentimiento para leer su perfil nace cuando te escribe,
+     * no antes. Comprobado llamando con comentaristas reales — los que sí
+     * devuelven 200 son justo los que ya te habían escrito alguna vez.
      *
-     * Es falso, y se comprobó llamando: con el identificador que viene EN EL
-     * COMENTARIO, Meta contesta 200 y dice si te sigue. El 230 salía de usar
-     * identificadores viejos de la época de Unipile, que ya no existen.
-     *
-     * La diferencia se nota: a quien ya te sigue se le pedía que te siguiera.
-     * Nada delata más rápido que detrás no hay nadie mirando.
+     * Por eso hay TRES respuestas y no dos. Tratar "no se puede saber" como "no
+     * te sigue" es lo que hizo que a alguien que seguía la cuenta se le pidiera
+     * que la siguiera, y eso delata al instante que no hay nadie detrás.
      */
-    const yaSigue = quienEsId
+    const sigue: boolean | null = quienEsId
       ? await perfilDeQuienEscribe(cuenta.token, quienEsId)
           .then((p) => p.is_user_follow_business === true)
-          .catch(() => false)
-      : false;
+          .catch(() => null)
+      : null;
 
     /**
-     * El texto del follow es el que escribió la persona en el imán, sin tocarlo:
-     * es su condición y no le corresponde reformularla a un modelo.
+     * Y por eso hay dos textos.
+     *
+     * Cuando SE SABE que no te sigue, se le manda el del imán, que es el que
+     * escribió su dueño y pone la condición con sus palabras. Cuando no se
+     * sabe, uno que es cierto en los dos casos y que además pide lo único que
+     * desbloquea la comprobación: que conteste.
      */
-    const texto = fila.iman.followMessage;
+    const texto =
+      sigue === false ? fila.iman.followMessage : PEDIR_FOLLOW_SIN_SABER;
 
     const publico =
       RESPUESTA_PUBLICA[
@@ -179,9 +182,9 @@ export async function atenderComentarios(
       hechos.push({
         usuario: c.username,
         comentario: textoDe.get(c.commentId!),
-        yaSigue,
+        sigue,
         publico,
-        privado: yaSigue ? "(el recurso, ya te sigue)" : texto,
+        privado: sigue === true ? "(el recurso, ya te sigue)" : texto,
       });
       continue;
     }
@@ -202,13 +205,13 @@ export async function atenderComentarios(
         // El id con el que Meta le llama. Es la única forma de casar su
         // respuesta con este contacto, y con el que se mira si te sigue.
         providerId: quienEsId,
-        state: yaSigue ? "verificado" : "pidiendo_follow",
-        followAsks: yaSigue ? 0 : 1,
-        verifiedAt: yaSigue ? new Date() : null,
+        state: sigue === true ? "verificado" : "pidiendo_follow",
+        followAsks: sigue === true ? 0 : 1,
+        verifiedAt: sigue === true ? new Date() : null,
       })
       .returning();
 
-    if (yaSigue) {
+    if (sigue === true) {
       /**
        * Ya te sigue: se le manda el recurso directamente.
        *
@@ -230,7 +233,7 @@ export async function atenderComentarios(
       hechos.push({
         usuario: c.username,
         respuestaPublica: respuesta.id,
-        yaSigue: true,
+        sigue: true,
         entregado: entrega.mensaje.slice(0, 120),
       });
       continue;
@@ -245,7 +248,7 @@ export async function atenderComentarios(
     hechos.push({
       usuario: c.username,
       respuestaPublica: respuesta.id,
-      yaSigue: false,
+      sigue,
       mensajePrivado: dm.message_id ?? "enviado",
     });
   }
@@ -671,30 +674,32 @@ export async function atenderMensaje(
   if (!cuenta) return { atendido: false, que: "la cuenta no está autorizada" };
 
   /**
-   * Si Meta no contesta, se da por hecho que NO sigue. Nunca lo contrario.
+   * Si Meta no contesta, no se entrega, pero tampoco se afirma que no sigue.
    *
    * Esta llamada podía reventar y llevarse por delante toda la respuesta: la
-   * persona escribía y no recibía nada, y el fallo quedaba enterrado en un
-   * registro. Tratar un error como "no sigue" tiene dos ventajas: no regala el
-   * recurso a quien no ha cumplido la condición, y el mensaje que sale invita a
-   * volver a escribir, que es exactamente lo que hace falta para reintentarlo.
+   * persona escribía y no recibía nada. Ahora un error no tumba nada — pero
+   * tampoco se convierte en "no me sigues", porque decírselo a alguien que sí
+   * te sigue es el error que más rápido delata que no hay nadie detrás.
    */
   const perfil = (await perfilDeQuienEscribe(cuenta.token, igsid).catch(
     async (err) => {
       await db.insert(runLogs).values({
         workflow: "iman",
         level: "warn",
-        message: `No se pudo comprobar si @${fila.contacto.username} sigue a la cuenta: se le contesta como si no.`,
+        message: `No se pudo comprobar si @${fila.contacto.username} sigue a la cuenta.`,
         payload: {
           igsid,
           error: err instanceof Error ? err.message : String(err),
         },
       });
-      return { id: igsid } as PerfilDeQuienEscribe;
+      return null;
     },
   ))!;
 
-  if (!perfil.is_user_follow_business) {
+  if (perfil?.is_user_follow_business !== true) {
+    // Se sabe que no sigue, o no se ha podido saber. No es lo mismo y no se le
+    // dice lo mismo: solo se afirma lo que consta.
+    const seSabe = perfil !== null;
     /**
      * No sigue. Se le dice UNA vez y se para.
      *
@@ -719,13 +724,18 @@ export async function atenderMensaje(
       cuenta.token,
       cuenta.igUserId,
       igsid,
-      RECORDATORIO_FOLLOW,
+      seSabe ? RECORDATORIO_FOLLOW : PEDIR_FOLLOW_SIN_SABER,
     );
     await db
       .update(magnetContacts)
       .set({ followAsks: fila.contacto.followAsks + 1 })
       .where(eq(magnetContacts.id, fila.contacto.id));
-    return { atendido: true, que: "no sigue: se le ha recordado" };
+    return {
+      atendido: true,
+      que: seSabe
+        ? "no sigue: se le ha recordado"
+        : "no se pudo comprobar: se le ha pedido sin afirmar nada",
+    };
   }
 
   // Sí sigue: se le entrega.

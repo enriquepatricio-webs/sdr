@@ -324,5 +324,20 @@ export const RESPUESTA_PUBLICA = [
   "Enviado por privado 📩",
 ];
 
+/**
+ * Lo que se le dice a quien comenta y NO se puede saber si sigue.
+ *
+ * Meta no deja consultar `is_user_follow_business` de alguien que solo ha
+ * comentado: responde 230 "User consent is required". El consentimiento llega
+ * cuando esa persona te escribe, no antes. Así que en el primer mensaje no se
+ * sabe, y afirmar que no te sigue es equivocarse con la mitad de la gente —le
+ * pasó a alguien que sí seguía la cuenta y sonó a robot roto.
+ *
+ * Este texto es correcto en los dos casos y, además, pide justo lo único que
+ * desbloquea la comprobación: que conteste.
+ */
+export const PEDIR_FOLLOW_SIN_SABER =
+  "¡Hola! He visto tu comentario. Te lo paso en cuanto te tenga siguiendo la cuenta: si ya lo haces, respóndeme por aquí y te lo mando al momento.";
+
 export const RECORDATORIO_FOLLOW =
   "Gracias, pero todavía no me sale que me sigas. Dale a seguir y te lo mando al momento; si ya le has dado, dame un minuto y vuelve a escribirme.";
