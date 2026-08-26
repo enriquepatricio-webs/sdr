@@ -31,7 +31,22 @@ function prueba(nombre: string, fn: () => void) {
   try { fn(); ok++ } catch (e) { fallos.push(`${nombre}\n    ${(e as Error).message.split('\n')[0]}`) }
 }
 
-const FICHEROS = ['sdr-outbound', 'sdr-inbound', 'sdr-followup', 'sdr-magnets']
+/**
+ * Los SEIS que corren de verdad, no cuatro.
+ *
+ * W5 y W6 existian solo dentro de n8n: si ese servidor se pierde, hay que
+ * reconstruirlos de memoria. Y un repositorio que describe cuatro de los seis
+ * workflows que corren es peor que uno que no describe ninguno, porque invita a
+ * razonar sobre un sistema que no es el que esta funcionando.
+ */
+const FICHEROS = [
+  'sdr-outbound',
+  'sdr-inbound',
+  'sdr-followup',
+  'sdr-magnets',
+  'sdr-replenish',
+  'sdr-sweep',
+]
 const workflows: Record<string, Workflow> = {}
 
 for (const f of FICHEROS) {
@@ -121,7 +136,14 @@ for (const f of FICHEROS) {
    * defiende de verdad es que ninguno de los cuatro tenga un nodo que hable con
    * Unipile por su cuenta; de eso se encarga la comprobación de más arriba.
    */
-  const DELEGAN = { 'sdr-inbound': 'herramienta del agente', 'sdr-magnets': '/api/magnets/run' }
+  const DELEGAN = {
+    'sdr-inbound': 'herramienta del agente',
+    'sdr-magnets': '/api/magnets/run',
+    // Estos dos no escriben a nadie: W5 rellena la cola y W6 devuelve al flujo
+    // de entrantes lo que llego y nadie atendio. Quien envia sigue siendo W2.
+    'sdr-replenish': 'no envia: solo rellena la cola',
+    'sdr-sweep': 'no envia: reinyecta en W2',
+  }
   prueba(`${f}: los envíos van por la API del dashboard`, () => {
     const texto = JSON.stringify(w)
     const delega = f in DELEGAN
@@ -137,10 +159,33 @@ for (const f of FICHEROS) {
 
 /* Comprobaciones concretas de cada workflow. */
 
-prueba('W1 reabastece antes de pedir trabajo', () => {
+/**
+ * El reabastecimiento NO va delante del envio.
+ *
+ * Estuvo ahi y se saco a W5 a proposito: tarda minutos y retrasaba cada vuelta
+ * de W1. El fichero del repo se quedo con el nodo viejo mucho despues de que
+ * produccion dejara de tenerlo, y leerlo llevo a concluir que habia una llamada
+ * duplicada que no existia. Esta comprobacion existe para que el repo no vuelva
+ * a contar una historia distinta de la que corre.
+ */
+prueba('W1 pide trabajo sin reabastecer primero', () => {
   const texto = JSON.stringify(workflows['sdr-outbound'])
-  assert.ok(texto.includes('/api/prospect/replenish'), 'W1 no llama al reabastecimiento')
   assert.ok(texto.includes('mode=primer_toque'), 'W1 no pide primeros toques')
+  assert.ok(
+    !texto.includes('/api/prospect/replenish'),
+    'W1 vuelve a reabastecer antes de enviar: eso retrasa cada vuelta y ya vive en W5',
+  )
+})
+
+prueba('el reabastecimiento vive en W5, y el barrido en W6', () => {
+  assert.ok(
+    JSON.stringify(workflows['sdr-replenish']).includes('/api/prospect/replenish'),
+    'W5 no reabastece',
+  )
+  assert.ok(
+    JSON.stringify(workflows['sdr-sweep']).includes('/api/messages/sweep'),
+    'W6 no barre las respuestas sin contestar',
+  )
 })
 
 prueba('W1 espera un tiempo aleatorio entre leads', () => {

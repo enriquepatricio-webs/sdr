@@ -1,0 +1,64 @@
+{
+  "name": "SDR · 6 · Barrer respuestas sin contestar",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "ca50d87c-ae0e-40d1-9357-26a20ea92a3d",
+      "name": "Cada 15 minutos",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://sdr.thecotocompany.com/api/messages/sweep",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "7ce8550c-e71b-43d7-af14-390071fdafff",
+      "name": "Buscar respuestas sin contestar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        224,
+        0
+      ],
+      "notes": "Lee los hilos y los buzones, y reinyecta en W2 lo que llego y nadie atendio. Con el webhook sano no encuentra nada.",
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Cada 15 minutos": {
+      "main": [
+        [
+          {
+            "node": "Buscar respuestas sin contestar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "description": "Cada 15 min lee los hilos y los buzones y reinyecta en W2 lo que llegó y nadie atendió. Con el webhook sano no encuentra nada, pero lleva 62 mensajes rescatados: son conversaciones que se habrían perdido en silencio."
+}

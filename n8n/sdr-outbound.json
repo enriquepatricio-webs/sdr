@@ -23,26 +23,6 @@
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "https://sdr.thecotocompany.com/api/prospect/replenish",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "options": {
-          "timeout": 120000
-        }
-      },
-      "id": "fed967ca-2de4-4a4b-bd28-3a2e6d689f32",
-      "name": "Reabastecer si hace falta",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.4,
-      "position": [
-        224,
-        0
-      ],
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
         "url": "=https://sdr.thecotocompany.com/api/playbook/active?campaign_id={{ $('Lead a lead').item.json.campaignId }}&lead_id={{ $('Lead a lead').item.json.id }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
@@ -215,7 +195,7 @@
       "main": [
         [
           {
-            "node": "Reabastecer si hace falta",
+            "node": "Siguiente lote",
             "type": "main",
             "index": 0
           }
@@ -295,17 +275,6 @@
         ]
       ]
     },
-    "Reabastecer si hace falta": {
-      "main": [
-        [
-          {
-            "node": "Siguiente lote",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Enriquecer prospecto": {
       "main": [
         [
@@ -344,5 +313,6 @@
     "executionOrder": "v1",
     "availableInMCP": true,
     "binaryMode": "separate"
-  }
+  },
+  "description": "Cada 30 min: coge el lote que autorice la API (topes por cuenta, campaña y hora), enriquece el prospecto, redacta el primer toque con el playbook activo y lo envía o lo deja en borrador según el autopiloto. Espera 90-420 s aleatorios entre leads. El reabastecimiento NO va aquí: vive en W5 porque tarda minutos y no puede retrasar el envío."
 }

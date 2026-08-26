@@ -1,0 +1,64 @@
+{
+  "name": "SDR · 5 · Reabastecer leads",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "01fdb925-636f-4d6e-a679-76e34da47a21",
+      "name": "Cada 30 minutos",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://sdr.thecotocompany.com/api/prospect/replenish",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "a61a2ee2-8f25-43b4-83dc-4e15300ee122",
+      "name": "Reabastecer si hace falta",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        224,
+        0
+      ],
+      "notes": "Barre lo terminado y lanza busquedas nuevas. Tarda minutos: por eso vive aqui y no delante de W1.",
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Cada 30 minutos": {
+      "main": [
+        [
+          {
+            "node": "Reabastecer si hace falta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "description": "Cada 30 min recoge las búsquedas de prospección ya terminadas en Apify, las ingiere y puntúa, y lanza búsquedas nuevas para las campañas que se están quedando sin leads. Va aparte de W1 a propósito: tarda minutos y no puede bloquear el envío."
+}
