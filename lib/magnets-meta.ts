@@ -15,6 +15,7 @@ import {
   mensajeDirecto,
   mensajePrivadoAlComentario,
   perfilDeQuienEscribe,
+  type PerfilDeQuienEscribe,
   responderComentario,
   sesionInvalidada,
 } from "./instagram";
@@ -367,23 +368,31 @@ async function asegurarLeadDelIman(
  * hasta que esa persona no te escribe, Meta responde "User consent is
  * required". Por eso el embudo pide primero y comprueba después.
  */
+/** Una ficha de imán con su imán y su cuenta, que es como se lee siempre. */
+type Fila = {
+  contacto: typeof magnetContacts.$inferSelect;
+  iman: typeof leadMagnets.$inferSelect;
+  cuenta: typeof accounts.$inferSelect;
+};
+
 /**
  * Alguien pide la palabra por privado, sin haber comentado nunca.
  *
  * Es la otra puerta del imán y tiene que llevar al mismo sitio. Mucha gente ve
  * "comenta SISTEMA" y escribe SISTEMA por mensaje directo: es lo natural si ya
- * te sigue. Hasta ahora eso caía en "no es de ningún imán" y se quedaba sin
- * respuesta, que es la peor manera de recibir a alguien que te está pidiendo
- * algo.
+ * te sigue. Eso caía en "no es de ningún imán" y se quedaba sin respuesta, que
+ * es la peor manera de recibir a alguien que te está pidiendo algo.
  *
- * Devuelve null si no menciona ninguna palabra, o si ya tiene ese recurso: en
- * ese caso la conversación sigue su curso normal y la lleva el agente.
+ * Esta función SOLO le abre la ficha. Quién comprueba el follow y quién entrega
+ * es el flujo de siempre, unas líneas más abajo: duplicar aquí esa decisión
+ * sería tener dos sitios donde arreglar el mismo fallo, y el segundo siempre se
+ * queda sin arreglar.
  */
-async function atenderPalabraEnMensaje(
+async function fichaPorPalabraEnMensaje(
   igsid: string,
   texto: string,
   igUserId: string,
-): Promise<{ atendido: boolean; que?: string; detalle?: string } | null> {
+): Promise<Fila | null> {
   const [cuentaFila] = await db
     .select()
     .from(accounts)
@@ -399,79 +408,63 @@ async function atenderPalabraEnMensaje(
         eq(leadMagnets.active, true),
       ),
     );
-
   const iman = imanes.find((m) => mencionaClave(texto, m.keyword));
   if (!iman) return null;
 
   const cuenta = await tokenDeCuenta(cuentaFila.id);
-  if (!cuenta) return { atendido: false, que: "la cuenta no está autorizada" };
-
-  const perfil = await perfilDeQuienEscribe(cuenta.token, igsid);
-  const username = normalizarUsuario(perfil.username ?? igsid);
+  if (!cuenta) return null;
 
   /**
-   * Se reserva la fila ANTES de escribir nada.
+   * El nombre de usuario, y si no se puede leer, el identificador.
    *
-   * Un comentario y un mensaje con la misma palabra pueden llegar casi a la vez,
-   * y el índice único por (imán, usuario) es lo que impide que las dos vías
-   * entreguen el mismo recurso dos veces. Si el hueco ya estaba cogido, esta
-   * vía se retira y deja que siga la otra.
+   * La ficha se guarda por (imán, usuario), así que necesita una clave estable.
+   * Si Meta no contesta ahora mismo, el identificador sirve igual de bien y la
+   * persona recibe respuesta; quedarse sin ficha por no saber cómo se llama
+   * sería dejarla en silencio por un detalle cosmético.
    */
-  const [reservado] = await db
+  const perfil = await perfilDeQuienEscribe(cuenta.token, igsid).catch(
+    () => null,
+  );
+  const username = normalizarUsuario(perfil?.username ?? igsid);
+
+  /**
+   * Se abre en "pidiendo_follow" aunque ya nos siga.
+   *
+   * No es un descuido: es el estado desde el que el flujo de abajo comprueba el
+   * follow y entrega. Abrirla ya verificada la mandaría directa al agente sin
+   * haberle dado nunca el recurso, que es justo lo que vino a buscar.
+   */
+  await db
     .insert(magnetContacts)
     .values({
       magnetId: iman.id,
       username,
-      fullName: perfil.name ?? null,
+      fullName: perfil?.name ?? null,
       providerId: igsid,
-      state: perfil.is_user_follow_business ? "verificado" : "pidiendo_follow",
-      followAsks: perfil.is_user_follow_business ? 0 : 1,
-      verifiedAt: perfil.is_user_follow_business ? new Date() : null,
+      state: "pidiendo_follow",
+      followAsks: 0,
     })
-    .onConflictDoNothing()
-    .returning();
-
-  // Ya existía: no es alguien nuevo pidiendo el recurso, así que este camino no
-  // es el suyo. Que lo resuelva el flujo normal con lo que ya sabe de él.
-  if (!reservado) return null;
-
-  if (!perfil.is_user_follow_business) {
-    await mensajeDirecto(
-      cuenta.token,
-      cuenta.igUserId,
-      igsid,
-      iman.followMessage,
-    );
-    await db.insert(runLogs).values({
-      workflow: "iman",
-      level: "info",
-      message: `@${username} pidió "${iman.keyword}" por privado y todavía no sigue: se le ha pedido.`,
-      payload: { magnetId: iman.id, igsid },
-    });
-    return { atendido: true, que: "pidió la palabra por privado: no sigue" };
-  }
+    .onConflictDoNothing();
 
   /**
-   * Va por el hilo, no anclado a un comentario: acaba de escribirnos, así que
-   * la conversación está abierta y no hay ningún comentario del que colgar.
+   * Se relee en vez de usar lo devuelto por el INSERT.
+   *
+   * Si la ficha ya existía —un comentario suyo llegando casi a la vez, o una
+   * conversación anterior— el INSERT no devuelve nada, y devolver null aquí
+   * dejaría a esa persona sin respuesta. Releer da la fila en los dos casos.
    */
-  const entrega = await entregarRecurso({
-    iman,
-    cuentaId: cuentaFila.id,
-    token: cuenta.token,
-    igUserId: cuenta.igUserId,
-    contacto: reservado,
-    igsid,
-    username,
-    dijo: texto,
-    via: { hilo: true },
-  });
-
-  return {
-    atendido: true,
-    que: "pidió la palabra por privado: recurso entregado",
-    detalle: entrega.mensaje,
-  };
+  const [fila] = await db
+    .select({ contacto: magnetContacts, iman: leadMagnets, cuenta: accounts })
+    .from(magnetContacts)
+    .innerJoin(leadMagnets, eq(leadMagnets.id, magnetContacts.magnetId))
+    .innerJoin(accounts, eq(accounts.id, leadMagnets.accountId))
+    .where(
+      and(
+        eq(magnetContacts.magnetId, iman.id),
+        eq(magnetContacts.username, username),
+      ),
+    );
+  return fila ?? null;
 }
 
 export async function atenderMensaje(
@@ -569,8 +562,7 @@ export async function atenderMensaje(
    * pidiendo que le dejen en paz —eso siempre gana.
    */
   if (!fila && igUserId && !pideQueLeDejen(texto)) {
-    const porPalabra = await atenderPalabraEnMensaje(igsid, texto, igUserId);
-    if (porPalabra) return porPalabra;
+    fila = (await fichaPorPalabraEnMensaje(igsid, texto, igUserId)) ?? fila;
   }
 
   if (!fila) return { atendido: false, que: "no es de ningún imán" };
@@ -624,7 +616,26 @@ export async function atenderMensaje(
   const cuenta = await tokenDeCuenta(fila.cuenta.id);
   if (!cuenta) return { atendido: false, que: "la cuenta no está autorizada" };
 
-  const perfil = await perfilDeQuienEscribe(cuenta.token, igsid);
+  /**
+   * Si Meta no contesta, se da por hecho que NO sigue. Nunca lo contrario.
+   *
+   * Esta llamada podía reventar y llevarse por delante toda la respuesta: la
+   * persona escribía y no recibía nada, y el fallo quedaba enterrado en un
+   * registro. Tratar un error como "no sigue" tiene dos ventajas: no regala el
+   * recurso a quien no ha cumplido la condición, y el mensaje que sale invita a
+   * volver a escribir, que es exactamente lo que hace falta para reintentarlo.
+   */
+  const perfil = (await perfilDeQuienEscribe(cuenta.token, igsid).catch(
+    async (err) => {
+      await db.insert(runLogs).values({
+        workflow: "iman",
+        level: "warn",
+        message: `No se pudo comprobar si @${fila.contacto.username} sigue a la cuenta: se le contesta como si no.`,
+        payload: { igsid, error: err instanceof Error ? err.message : String(err) },
+      });
+      return { id: igsid } as PerfilDeQuienEscribe;
+    },
+  ))!;
 
   if (!perfil.is_user_follow_business) {
     /**
