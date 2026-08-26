@@ -707,13 +707,18 @@ export async function atenderMensaje(
      * de que te escriban es lo que hace que parezca un bot roto.
      */
     if (fila.contacto.followAsks >= MAX_PETICIONES_DE_FOLLOW) {
-      // Se deja de PEDIR, no de responder. Quien escribe merece respuesta
-      // aunque ya no haya nada nuevo que pedirle.
+      /**
+       * Se deja de PEDIR, no de responder. Quien escribe merece respuesta
+       * aunque ya no haya nada nuevo que pedirle.
+       *
+       * Y aquí tampoco se afirma nada: "sigo sin verte por ahí" es una
+       * afirmación sobre algo que puede no constar, igual que el recordatorio.
+       */
       await mensajeDirecto(
         cuenta.token,
         cuenta.igUserId,
         igsid,
-        SIN_MAS_RECORDATORIOS,
+        seSabe ? SIN_MAS_RECORDATORIOS : PEDIR_FOLLOW_SIN_SABER,
       );
       return {
         atendido: true,
