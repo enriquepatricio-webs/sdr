@@ -1,7 +1,14 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "./db";
-import { campaigns, type leadMagnets } from "./db/schema";
+import { campaigns, playbooks, type leadMagnets } from "./db/schema";
 import { playbookActivo } from "./workspace";
+
+/**
+ * El nombre es el enganche entre el script que lo crea y el código que lo usa.
+ * Vive aquí, en una constante, para que renombrarlo rompa la compilación en vez
+ * de dejar campañas nuevas con el playbook equivocado y en silencio.
+ */
+export const NOMBRE_PLAYBOOK_IMAN = "Conversación de lead magnet";
 
 /**
  * La campaña de un imán, creándola la primera vez.
@@ -10,6 +17,15 @@ import { playbookActivo } from "./workspace";
  * la que colgar. Vive aparte de `lib/magnets.ts` para que ese fichero siga
  * siendo puro: es lo que permite probar el embudo entero sin base de datos.
  */
+/** El playbook de la conversación posterior a entregar un imán, si existe. */
+async function playbookDelIman() {
+  const [p] = await db
+    .select({ id: playbooks.id })
+    .from(playbooks)
+    .where(eq(playbooks.name, NOMBRE_PLAYBOOK_IMAN));
+  return p ?? null;
+}
+
 export async function campanaDelImanId(
   iman: typeof leadMagnets.$inferSelect,
 ): Promise<string> {
@@ -50,7 +66,21 @@ export async function campanaDelImanId(
        * descubrirlo a mitad de una conversación es descubrirlo tarde. Se coge
        * el de la empresa, o el de fábrica si no tiene uno propio.
        */
-      playbookId: (await playbookActivo(iman.workspaceId))?.id ?? null,
+      /**
+       * El playbook de la conversación de imán, no el de venta en frío.
+       *
+       * No se parecen en nada: al de la campaña fría hay que convencerlo de que
+       * te escuche, y este ya ha levantado la mano y tiene algo tuyo en las
+       * manos. Con el playbook frío, el agente le escribía como a un
+       * desconocido a alguien que acababa de pedirle el recurso.
+       *
+       * Si ese playbook no existe todavía —`npm run playbook:iman` lo crea— se
+       * usa el activo de la empresa, que es peor pero funciona.
+       */
+      playbookId:
+        (await playbookDelIman())?.id ??
+        (await playbookActivo(iman.workspaceId))?.id ??
+        null,
       workspaceId: iman.workspaceId,
       accountId: iman.accountId,
       channel: "instagram",
