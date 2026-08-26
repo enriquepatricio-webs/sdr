@@ -3,7 +3,11 @@ import { NextResponse, after } from "next/server";
 import { and, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { accounts, leadMagnets, runLogs } from "@/lib/db/schema";
-import { atenderComentarios, atenderMensaje } from "@/lib/magnets-meta";
+import {
+  atenderComentarioDelAviso,
+  atenderComentarios,
+  atenderMensaje,
+} from "@/lib/magnets-meta";
 
 export const dynamic = "force-dynamic";
 
@@ -109,7 +113,20 @@ type PayloadMeta = {
      * contestado con el token que no era.
      */
     id?: string;
-    changes?: { field?: string; value?: { from?: { id?: string } } }[];
+    changes?: {
+      field?: string;
+      /**
+       * El comentario entero, no solo quién lo firma. Trae `media`, y ahí está
+       * `original_media_id`: la publicación de verdad cuando el comentario
+       * llega desde un anuncio.
+       */
+      value?: {
+        id?: string;
+        text?: string;
+        from?: { id?: string; username?: string };
+        media?: { id?: string; original_media_id?: string };
+      };
+    }[];
     /** Mensajes entrantes. Vienen en `messaging`, no en `changes`. */
     messaging?: {
       sender?: { id?: string };
@@ -175,6 +192,24 @@ async function atenderTodosLosImanes(igUserId?: string): Promise<void> {
       message: `Falló atender un comentario entrante: ${
         err instanceof Error ? err.message : String(err)
       }`,
+    });
+  }
+}
+
+async function atenderComentarioAlVuelo(
+  igUserId: string,
+  valor: NonNullable<NonNullable<PayloadMeta["entry"]>[number]["changes"]>[number]["value"],
+): Promise<void> {
+  try {
+    await atenderComentarioDelAviso(igUserId, valor ?? {});
+  } catch (err) {
+    await db.insert(runLogs).values({
+      workflow: "iman",
+      level: "error",
+      message: `Falló atender un comentario desde su aviso: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      payload: { commentId: valor?.id ?? null },
     });
   }
 }
@@ -329,7 +364,24 @@ export async function POST(request: Request) {
    * comentario atendido. `after` mantiene viva la invocación después de haber
    * respondido, que es exactamente lo que hace falta aquí.
    */
-  for (const e of conComentario) after(atenderTodosLosImanes(e.id));
+  /**
+   * Se atiende el comentario que trae el aviso, y ADEMÁS se relee la
+   * publicación.
+   *
+   * El aviso es el camino bueno: llega en el momento y funciona también con los
+   * comentarios de un anuncio, que la lista de la publicación no devuelve. La
+   * relectura se queda como red por si el aviso viniera incompleto. Atender dos
+   * veces no duplica nada: el índice único por comentario lo impide.
+   */
+  for (const e of conComentario) {
+    if (!e.id) continue;
+    for (const c of e.changes ?? []) {
+      if (c.field === "comments" && c.value?.id) {
+        after(atenderComentarioAlVuelo(e.id, c.value));
+      }
+    }
+    after(atenderTodosLosImanes(e.id));
+  }
 
   /**
    * Un mensaje entrante es el momento de comprobar si esa persona te sigue.

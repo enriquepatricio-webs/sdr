@@ -56,6 +56,207 @@ export type ResultadoEntrega = {
  * copia en cada sitio, mejorar el mensaje en uno dejaría el otro escribiendo
  * como antes — que es exactamente lo que pasó con los imanes de Unipile.
  */
+
+/**
+ * Atiende UN comentario: el único sitio donde se decide qué se le hace.
+ *
+ * Vive fuera del bucle porque hay DOS formas de llegar a un comentario y tienen
+ * que acabar exactamente igual: releyendo la lista de la publicación, y el
+ * aviso que Meta manda en el momento. Con una copia en cada sitio, mejorar una
+ * dejaría la otra escribiendo como antes.
+ */
+async function atenderUnComentario(o: {
+  iman: typeof leadMagnets.$inferSelect;
+  cuentaId: string;
+  token: string;
+  igUserId: string;
+  commentId: string;
+  username: string;
+  fullName: string | null;
+  /** Quién lo escribió, según Meta. A veces no viene. */
+  autorId: string | null;
+  /** Lo que puso, si se conoce. */
+  dijo: string | null;
+  ensayo: boolean;
+}): Promise<Record<string, unknown>> {
+  /**
+   * Se intenta saber si ya te sigue, y muchas veces NO se puede.
+   *
+   * Meta responde 230 "User consent is required" cuando esa persona solo ha
+   * comentado: el permiso para leer su perfil nace cuando te escribe. Por eso
+   * hay tres respuestas y no dos, y por eso "no se sabe" nunca se trata como
+   * "no te sigue".
+   */
+  const sigue: boolean | null = o.autorId
+    ? await perfilDeQuienEscribe(o.token, o.autorId)
+        .then((p) => p.is_user_follow_business === true)
+        .catch(() => null)
+    : null;
+
+  const texto = sigue === false ? o.iman.followMessage : PEDIR_FOLLOW_SIN_SABER;
+  const publico =
+    RESPUESTA_PUBLICA[Math.floor(Date.now() / 1000) % RESPUESTA_PUBLICA.length];
+
+  if (o.ensayo) {
+    return {
+      usuario: o.username,
+      comentario: o.dijo,
+      sigue,
+      publico,
+      privado: sigue === true ? "(el recurso, ya te sigue)" : texto,
+    };
+  }
+
+  const respuesta = await responderComentario(o.token, o.commentId, publico);
+
+  const [contacto] = await db
+    .insert(magnetContacts)
+    .values({
+      magnetId: o.iman.id,
+      username: o.username,
+      fullName: o.fullName,
+      commentId: o.commentId,
+      providerId: o.autorId,
+      state: sigue === true ? "verificado" : "pidiendo_follow",
+      followAsks: sigue === true ? 0 : 1,
+      verifiedAt: sigue === true ? new Date() : null,
+    })
+    .returning();
+
+  if (sigue === true) {
+    const entrega = await entregarRecurso({
+      iman: o.iman,
+      cuentaId: o.cuentaId,
+      token: o.token,
+      igUserId: o.igUserId,
+      contacto,
+      igsid: o.autorId,
+      username: o.username,
+      dijo: o.dijo ?? o.iman.keyword,
+      via: { comentario: o.commentId },
+    });
+    return {
+      usuario: o.username,
+      respuestaPublica: respuesta.id,
+      sigue: true,
+      entregado: entrega.mensaje.slice(0, 120),
+    };
+  }
+
+  const dm = await mensajePrivadoAlComentario(
+    o.token,
+    o.igUserId,
+    o.commentId,
+    texto,
+  );
+  return {
+    usuario: o.username,
+    respuestaPublica: respuesta.id,
+    sigue,
+    mensajePrivado: dm.message_id ?? "enviado",
+  };
+}
+
+
+/**
+ * Atiende un comentario a partir del aviso de Meta, sin releer la publicación.
+ *
+ * Existe por un motivo concreto y caro: cuando promocionas un reel, quien
+ * comenta desde el ANUNCIO deja su comentario en otro medio distinto —Meta lo
+ * marca como `media_product_type: "AD"`— y `/{publicación}/comments` NO lo
+ * devuelve. Releyendo la lista, esos comentarios no existen: el aviso llega, el
+ * imán relee, no encuentra nada y esa persona se queda sin recurso para
+ * siempre. Si hay campaña detrás, puede ser la mayoría del volumen.
+ *
+ * El aviso trae todo lo que hace falta —quién, qué puso y en qué publicación—
+ * así que se atiende con eso y se acabó la dependencia.
+ */
+export async function atenderComentarioDelAviso(
+  igUserId: string,
+  aviso: {
+    id?: string;
+    text?: string;
+    from?: { id?: string; username?: string };
+    media?: { id?: string; original_media_id?: string };
+  },
+): Promise<{ atendido: boolean; que: string; detalle?: unknown }> {
+  const commentId = aviso.id;
+  const texto = aviso.text ?? "";
+  if (!commentId || !texto) return { atendido: false, que: "aviso sin comentario" };
+
+  // Lo que escribimos nosotros vuelve por el webhook: no se atiende.
+  if (aviso.from?.id && aviso.from.id === igUserId) {
+    return { atendido: false, que: "es nuestra propia respuesta" };
+  }
+
+  const [cuentaFila] = await db
+    .select()
+    .from(accounts)
+    .where(eq(accounts.igUserId, igUserId));
+  if (!cuentaFila) return { atendido: false, que: "cuenta desconocida" };
+
+  const imanes = await db
+    .select()
+    .from(leadMagnets)
+    .where(
+      and(eq(leadMagnets.accountId, cuentaFila.id), eq(leadMagnets.active, true)),
+    );
+  const candidatos = imanes.filter((m) => mencionaClave(texto, m.keyword));
+  if (!candidatos.length) return { atendido: false, que: "no dice ninguna palabra" };
+
+  const cuenta = await tokenDeCuenta(cuentaFila.id);
+  if (!cuenta) return { atendido: false, que: "la cuenta no está autorizada" };
+
+  /**
+   * De qué publicación es. `original_media_id` es la del reel cuando el
+   * comentario viene de un anuncio; `id` a secas cuando es orgánico.
+   */
+  const medioDelAviso = aviso.media?.original_media_id ?? aviso.media?.id ?? null;
+
+  for (const iman of candidatos) {
+    if (medioDelAviso) {
+      const suyo = await mediaDeUrl(cuenta.token, iman.postUrl).catch(() => null);
+      if (suyo && suyo !== medioDelAviso) continue;
+    }
+
+    /**
+     * El índice único por comentario es quien decide de verdad si ya se
+     * atendió: el aviso y la relectura pueden llegar a la vez, y sin esto la
+     * misma persona recibiría el mensaje dos veces.
+     */
+    const [yaEsta] = await db
+      .select({ id: magnetContacts.id })
+      .from(magnetContacts)
+      .where(eq(magnetContacts.commentId, commentId));
+    if (yaEsta) return { atendido: false, que: "ya estaba atendido" };
+
+    const hecho = await atenderUnComentario({
+      iman,
+      cuentaId: cuentaFila.id,
+      token: cuenta.token,
+      igUserId: cuenta.igUserId,
+      commentId,
+      username: normalizarUsuario(aviso.from?.username ?? commentId),
+      fullName: aviso.from?.username ?? null,
+      autorId: aviso.from?.id ?? null,
+      dijo: texto,
+      ensayo: false,
+    });
+
+    await db.insert(runLogs).values({
+      workflow: "iman",
+      level: "info",
+      message: `Comentario atendido al vuelo en "${iman.name}"${
+        aviso.media?.original_media_id ? " (llegó desde un anuncio)" : ""
+      }.`,
+      payload: { commentId, ...hecho },
+    });
+    return { atendido: true, que: "atendido desde el aviso", detalle: hecho };
+  }
+
+  return { atendido: false, que: "el comentario no es de ninguna publicación con imán" };
+}
+
 export async function atenderComentarios(
   magnetId: string,
   opciones: { ensayo?: boolean; maximo?: number } = {},
@@ -142,115 +343,20 @@ export async function atenderComentarios(
 
   const hechos: Record<string, unknown>[] = [];
   for (const c of nuevos.slice(0, maximo)) {
-    const quienEsId = idDe.get(c.commentId!) ?? null;
-
-    /**
-     * Se intenta saber si ya te sigue, y muchas veces NO se puede.
-     *
-     * Meta responde 230 "User consent is required" cuando esa persona solo ha
-     * comentado: el consentimiento para leer su perfil nace cuando te escribe,
-     * no antes. Comprobado llamando con comentaristas reales — los que sí
-     * devuelven 200 son justo los que ya te habían escrito alguna vez.
-     *
-     * Por eso hay TRES respuestas y no dos. Tratar "no se puede saber" como "no
-     * te sigue" es lo que hizo que a alguien que seguía la cuenta se le pidiera
-     * que la siguiera, y eso delata al instante que no hay nadie detrás.
-     */
-    const sigue: boolean | null = quienEsId
-      ? await perfilDeQuienEscribe(cuenta.token, quienEsId)
-          .then((p) => p.is_user_follow_business === true)
-          .catch(() => null)
-      : null;
-
-    /**
-     * Y por eso hay dos textos.
-     *
-     * Cuando SE SABE que no te sigue, se le manda el del imán, que es el que
-     * escribió su dueño y pone la condición con sus palabras. Cuando no se
-     * sabe, uno que es cierto en los dos casos y que además pide lo único que
-     * desbloquea la comprobación: que conteste.
-     */
-    const texto =
-      sigue === false ? fila.iman.followMessage : PEDIR_FOLLOW_SIN_SABER;
-
-    const publico =
-      RESPUESTA_PUBLICA[
-        Math.floor(Date.now() / 1000) % RESPUESTA_PUBLICA.length
-      ];
-
-    if (ensayo) {
-      hechos.push({
-        usuario: c.username,
-        comentario: textoDe.get(c.commentId!),
-        sigue,
-        publico,
-        privado: sigue === true ? "(el recurso, ya te sigue)" : texto,
-      });
-      continue;
-    }
-
-    const respuesta = await responderComentario(
-      cuenta.token,
-      c.commentId!,
-      publico,
-    );
-
-    const [contacto] = await db
-      .insert(magnetContacts)
-      .values({
-        magnetId: fila.iman.id,
-        username: c.username,
-        fullName: c.fullName,
-        commentId: c.commentId,
-        // El id con el que Meta le llama. Es la única forma de casar su
-        // respuesta con este contacto, y con el que se mira si te sigue.
-        providerId: quienEsId,
-        state: sigue === true ? "verificado" : "pidiendo_follow",
-        followAsks: sigue === true ? 0 : 1,
-        verifiedAt: sigue === true ? new Date() : null,
-      })
-      .returning();
-
-    if (sigue === true) {
-      /**
-       * Ya te sigue: se le manda el recurso directamente.
-       *
-       * Va anclado a su comentario y no por el hilo, porque puede no haberte
-       * escrito nunca y entonces no hay conversación abierta por la que
-       * mandarle nada. Meta acepta ese privado durante siete días.
-       */
-      const entrega = await entregarRecurso({
+    hechos.push(
+      await atenderUnComentario({
         iman: fila.iman,
         cuentaId: fila.cuenta.id,
         token: cuenta.token,
         igUserId: cuenta.igUserId,
-        contacto,
-        igsid: quienEsId,
+        commentId: c.commentId!,
         username: c.username,
-        dijo: textoDe.get(c.commentId!) ?? fila.iman.keyword,
-        via: { comentario: c.commentId! },
-      });
-      hechos.push({
-        usuario: c.username,
-        respuestaPublica: respuesta.id,
-        sigue: true,
-        entregado: entrega.mensaje.slice(0, 120),
-      });
-      continue;
-    }
-
-    const dm = await mensajePrivadoAlComentario(
-      cuenta.token,
-      cuenta.igUserId,
-      c.commentId!,
-      texto,
+        fullName: c.fullName,
+        autorId: idDe.get(c.commentId!) ?? null,
+        dijo: textoDe.get(c.commentId!) ?? null,
+        ensayo,
+      }),
     );
-    hechos.push({
-      usuario: c.username,
-      respuestaPublica: respuesta.id,
-      sigue,
-      mensajePrivado: dm.message_id ?? "enviado",
-    });
   }
 
   if (!ensayo && hechos.length) {
