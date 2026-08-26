@@ -282,9 +282,12 @@ test("los textos del imán no pueden llevar cifras de dinero", () => {
     sinCifrasDeDinero("invierte +1.000€/mes"),
     "invierte +(importe omitido)/mes",
   );
+  // El "USD" tambien se va. Antes se quedaba suelto detras del importe borrado
+  // y el filtro de salida bloquea la palabra sola: el mensaje moria igual,
+  // ahora sin que se viera por que.
   assert.equal(
     sinCifrasDeDinero("cuesta $1,200 USD"),
-    "cuesta (importe omitido) USD",
+    "cuesta (importe omitido)",
   );
   assert.equal(sinCifrasDeDinero("unos 50 dolares"), "unos (importe omitido)");
   // Lo que NO es dinero se queda intacto.
@@ -293,6 +296,31 @@ test("los textos del imán no pueden llevar cifras de dinero", () => {
     "20 mesas y 5 empleados",
   );
   assert.equal(sinCifrasDeDinero("abrimos a las 16:00"), "abrimos a las 16:00");
+});
+
+/**
+ * Las cifras que se escaparon en produccion, una por una.
+ *
+ * Todas venian de la web del PROSPECTO, no de la nuestra: el agente las leia,
+ * las repetia en el mensaje para demostrar que se habia informado —que es lo
+ * que le pedimos— y el filtro de salida tumbaba el envio. Ese lead se quedaba
+ * sin primer mensaje hasta que alguna reescritura acertaba por casualidad.
+ */
+test("las magnitudes y las monedas sueltas tampoco pasan", () => {
+  const limpio = (t: string) => sinCifrasDeDinero(t);
+
+  // La magnitud pegada rompia la secuencia de digitos y la cifra salia intacta.
+  assert.ok(!MENCIONA_DINERO.test(limpio("3.700M€ de facturacion")));
+  assert.ok(!MENCIONA_DINERO.test(limpio("facturan 3.700 M€ al año")));
+  assert.ok(!MENCIONA_DINERO.test(limpio("presupuesto 20k€")));
+  assert.ok(!MENCIONA_DINERO.test(limpio("una ronda de 2 MM USD")));
+
+  // La moneda se quedaba huerfana detras del importe ya borrado.
+  assert.ok(!MENCIONA_DINERO.test(limpio("ticket medio de $2,500 USD")));
+
+  // Y lo que no es dinero sigue sin tocarse.
+  assert.equal(limpio("808 cooperativas y 250 empleados"), "808 cooperativas y 250 empleados");
+  assert.equal(limpio("abrimos a las 16:00"), "abrimos a las 16:00");
 });
 
 /**

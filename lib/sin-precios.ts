@@ -42,15 +42,37 @@ export const AVISO_SIN_PRECIOS =
  * carácter de palabra, así que `700€ al mes` no tiene frontera después del euro
  * y un `\b` al final no llegaba a casar nunca.
  */
+/**
+ * La magnitud pegada a la cifra: 20k€, 3.700M€, 2 MM USD.
+ *
+ * Sin esto, "3.700M€ de facturación" salía intacto del saneador —la M rompía la
+ * secuencia de dígitos— el agente lo repetía en el mensaje y el filtro de
+ * salida tumbaba el envío. Ese lead se quedaba sin primer mensaje hasta que
+ * alguna reescritura acertaba por casualidad.
+ */
+const MAGNITUD = '(?:\\s?(?:k|m|mm|bn|mil(?:lones)?)\\b\\.?)?'
+const NUMERO = `\\d[\\d.,]*${MAGNITUD}`
+
 const CIFRA_CON_MONEDA = new RegExp(
   [
-    '(?:€|\\$|£)\\s?\\d[\\d.,]*', //  350 €  ->  €350
-    '\\d[\\d.,]*\\s?(?:€|\\$|£)', //  350€
-    '\\d[\\d.,]*\\s?(?:eur|usd|gbp|euros?|d[oó]lares?|libras?)\\b', //  350 euros
+    `(?:€|\\$|£)\\s?${NUMERO}`, //  350 €  ->  €350
+    `${NUMERO}\\s?(?:€|\\$|£)`, //  350€, 20k€, 3.700M€
+    `${NUMERO}\\s?(?:eur|usd|gbp|euros?|d[oó]lares?|libras?)\\b`, //  350 euros
   ].join('|'),
   'gi',
 )
 
+/**
+ * Y la moneda que se queda huérfana detrás del importe ya borrado.
+ *
+ * "$2,500 USD" perdía la cifra pero conservaba el "USD", y el filtro de salida
+ * bloquea la palabra sola: el mensaje moría igual, ahora sin que se viera por
+ * qué. Se aplica DESPUÉS, sobre el texto ya sustituido.
+ */
+const MONEDA_HUERFANA = /\(importe omitido\)\s?(?:€|\$|£|\b(?:eur|usd|gbp|euros?|d[oó]lares?|libras?)\b)/gi
+
 export function sinCifrasDeDinero(texto: string): string {
-  return texto.replace(CIFRA_CON_MONEDA, '(importe omitido)')
+  return texto
+    .replace(CIFRA_CON_MONEDA, '(importe omitido)')
+    .replace(MONEDA_HUERFANA, '(importe omitido)')
 }
