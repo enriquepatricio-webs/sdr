@@ -20,7 +20,8 @@
     "test:cupo": "tsx lib/quota.test.ts",
     "test:reabastecer": "tsx lib/replenish.test.ts",
     "test:n8n": "tsx n8n/workflows.test.mts",
-    "test:imanes": "tsx lib/magnets.test.mts"
+    "test:imanes": "tsx lib/magnets.test.mts",
+    "playbook:coto": "tsx lib/playbooks/coto.cli.mts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
