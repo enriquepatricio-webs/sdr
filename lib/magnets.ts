@@ -76,25 +76,72 @@ function escapar(s: string): string {
 }
 
 /**
+ * Distancia de edición entre dos palabras: cuántos cambios de una letra
+ * separan a una de la otra. Se corta en cuanto se pasa del tope, que es lo
+ * único que interesa saber.
+ */
+function distancia(a: string, b: string, tope: number): number {
+  if (Math.abs(a.length - b.length) > tope) return tope + 1;
+  let previa = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const fila = [i];
+    let mejor = i;
+    for (let j = 1; j <= b.length; j++) {
+      const coste = a[i - 1] === b[j - 1] ? 0 : 1;
+      fila[j] = Math.min(fila[j - 1] + 1, previa[j] + 1, previa[j - 1] + coste);
+      mejor = Math.min(mejor, fila[j]);
+    }
+    if (mejor > tope) return tope + 1;
+    previa = fila;
+  }
+  return previa[b.length];
+}
+
+/**
+ * Cuántas letras se le perdonan a una palabra, según lo larga que sea.
+ *
+ * Cuanto más corta, más peligroso es perdonar: con la clave "LIGA" y una letra
+ * de margen entrarían "liga", "lima", "lisa" y "liga" dentro de "la liga de
+ * fútbol". Con "SISTEMA" una letra no la acerca a ninguna palabra normal.
+ */
+function letrasQueSePerdonan(clave: string): number {
+  if (clave.length >= 8) return 2;
+  if (clave.length >= 6) return 1;
+  return 0;
+}
+
+/**
  * Si un comentario contiene la palabra clave.
  *
  * Tolerante a que vaya dentro de una frase, con emojis o con signos pegados,
- * pero NO a que sea parte de otra palabra: con la clave "guia", "guiado" no
- * cuenta. Quien comenta otra cosa no ha pedido nada y no se le escribe.
+ * al plural, y a que esté MAL ESCRITA. Lo último no es un capricho: alguien
+ * comentó "Sistrma" en vez de "SISTEMA" y se quedó sin recurso por una letra.
+ * Quien escribe mal la palabra la está pidiendo igual.
  *
- * Sí se acepta el plural. "SISTEMAS" cuando la palabra es "SISTEMA" es alguien
- * que ha copiado mal lo que vio en el vídeo, no alguien hablando de otra cosa,
- * y dejarle sin respuesta por una letra sería absurdo. Es la única flexión que
- * se admite: cualquier otra terminación ya es otra palabra.
+ * Lo que NO cuenta es que sea parte de otra palabra: con la clave "guia",
+ * "guiado" no entra. Y a las claves cortas no se les perdona nada, porque una
+ * letra de margen sobre cuatro convierte cualquier cosa en la palabra.
  */
 export function mencionaClave(texto: string, clave: string): boolean {
   const c = normalizar(clave).trim();
   if (!c) return false;
-  const borde = "[^\\p{L}\\p{N}]";
-  return new RegExp(
-    `(?:^|${borde})${escapar(c)}(?:e?s)?(?:${borde}|$)`,
-    "u",
-  ).test(normalizar(texto));
+
+  // Una clave de varias palabras no se puede partir en fichas: se busca tal
+  // cual, como antes.
+  if (/\s/.test(c)) {
+    const borde = "[^\\p{L}\\p{N}]";
+    return new RegExp(`(?:^|${borde})${escapar(c)}(?:${borde}|$)`, "u").test(
+      normalizar(texto),
+    );
+  }
+
+  const tope = letrasQueSePerdonan(c);
+  for (const palabra of normalizar(texto).split(/[^\p{L}\p{N}]+/u)) {
+    if (!palabra) continue;
+    if (palabra === c || palabra === `${c}s` || palabra === `${c}es`) return true;
+    if (tope > 0 && distancia(palabra, c, tope) <= tope) return true;
+  }
+  return false;
 }
 
 /**

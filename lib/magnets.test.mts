@@ -390,3 +390,33 @@ test("el mensaje de no-se-sabe no afirma que no te siguen", () => {
   // la comprobacion en Meta.
   assert.match(t, /resp[oó]nd|escrib|contest/);
 });
+
+/**
+ * Alguien comento "Sistrma" y se quedo sin recurso por una letra.
+ *
+ * Quien escribe mal la palabra la esta pidiendo igual. Pero el margen tiene que
+ * ir con la longitud: perdonar una letra sobre cuatro convierte cualquier cosa
+ * en la clave, y entonces el iman contesta a quien no ha pedido nada.
+ */
+test("una errata en la palabra clave no deja a nadie fuera", () => {
+  // El caso real.
+  assert.ok(mencionaClave("Sistrma", "SISTEMA"));
+  assert.ok(mencionaClave("quiero el sistrma", "SISTEMA"));
+  assert.ok(mencionaClave("sisttema", "SISTEMA"));
+  assert.ok(mencionaClave("sistem", "SISTEMA"));
+
+  // Otra palabra distinta sigue sin contar.
+  assert.ok(!mencionaClave("sistematico", "SISTEMA"));
+  assert.ok(!mencionaClave("sistemita", "SISTEMA"));
+  assert.ok(!mencionaClave("me interesa", "SISTEMA"));
+
+  // A las claves cortas NO se les perdona nada: con una letra de margen sobre
+  // cuatro, "lima" y "lisa" dispararian la clave "LIGA".
+  assert.ok(mencionaClave("la liga de futbol", "LIGA"));
+  assert.ok(!mencionaClave("lima", "LIGA"));
+  assert.ok(!mencionaClave("lisa", "LIGA"));
+
+  // Y el acento se sigue perdonando, como antes.
+  assert.ok(mencionaClave("resena", "RESEÑA"));
+  assert.ok(!mencionaClave("receta", "RESEÑA"));
+});
