@@ -8,6 +8,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  faltaElRecurso,
   COMENTARIOS_POR_RELECTURA,
   NUDGE_MAX_MINUTOS,
   NUDGE_MIN_MINUTOS,
@@ -292,4 +293,44 @@ test("los textos del imán no pueden llevar cifras de dinero", () => {
     "20 mesas y 5 empleados",
   );
   assert.equal(sinCifrasDeDinero("abrimos a las 16:00"), "abrimos a las 16:00");
+});
+
+/**
+ * El caso real: el modelo escribió "Aquí lo tienes: [enlace] ¿Te sirve?".
+ *
+ * Puso el enlace pero no la frase literal del recurso, así que la comprobación
+ * anterior —que exigía el texto entero— creyó que faltaba y lo pegó otra vez
+ * debajo. Quien lo recibió vio el mismo enlace dos veces en un mensaje de dos
+ * líneas.
+ */
+test("no se pega el recurso otra vez si el enlace ya está", () => {
+  const recurso = "Aqui dentro esta el prompt: https://claude.ai/code/artifact/29fdc975 ";
+
+  assert.equal(
+    faltaElRecurso(
+      "Aquí lo tienes: https://claude.ai/code/artifact/29fdc975 ¿Te sirve?",
+      recurso,
+    ),
+    false,
+  );
+
+  // Si el enlace NO está, sí falta: es lo único que se ha prometido.
+  assert.equal(
+    faltaElRecurso("Aquí lo tienes, ¿te sirve?", recurso),
+    true,
+  );
+
+  // Un enlace pegado al punto final sigue contando como el mismo enlace.
+  assert.equal(
+    faltaElRecurso(
+      "Te lo dejo aquí: https://ejemplo.com/guia",
+      "Descárgalo en https://ejemplo.com/guia.",
+    ),
+    false,
+  );
+
+  // Un recurso sin enlace es texto y tiene que ir entero, pero los espacios de
+  // más y las mayúsculas no lo invalidan.
+  assert.equal(faltaElRecurso("Te paso el   CÓDIGO: ABC-123", "código: abc-123"), false);
+  assert.equal(faltaElRecurso("Te paso el código", "código: abc-123"), true);
 });

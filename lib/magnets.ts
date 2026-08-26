@@ -282,6 +282,31 @@ export function promptDeEntrega(opciones: {
 }
 
 /**
+ * Si al mensaje compuesto le falta lo prometido.
+ *
+ * Antes se comprobaba que el mensaje contuviera el recurso ENTERO, letra por
+ * letra. Es demasiado estricto: el modelo reescribe la frase que envuelve al
+ * enlace —para eso está— y entonces la comprobación fallaba y se pegaba el
+ * recurso otra vez debajo. Salía el mismo enlace dos veces en el mismo mensaje,
+ * que es exactamente lo que hace pensar a quien lo recibe que hay un bot roto.
+ *
+ * Lo que no puede faltar es el ENLACE, porque es lo único que no se puede
+ * reformular. Si el recurso no lleva ninguno, entonces es texto y sí tiene que
+ * estar entero, comparando sin que importen los espacios ni las mayúsculas.
+ */
+export function faltaElRecurso(mensaje: string, recurso: string): boolean {
+  // Sin la puntuación de cierre: un enlace al final de una frase se queda con
+  // el punto pegado, y ese punto no forma parte de la dirección.
+  const enlaces = (recurso.match(/https?:\/\/\S+/gi) ?? []).map((e) =>
+    e.replace(/[.,;:)\]}'"»]+$/, ""),
+  );
+  if (enlaces.length) return !enlaces.every((e) => mensaje.includes(e));
+
+  const plano = (t: string) => t.replace(/\s+/g, " ").trim().toLowerCase();
+  return !plano(mensaje).includes(plano(recurso));
+}
+
+/**
  * Lo que se contesta en público, colgando del comentario.
  *
  * Corto a propósito: lo lee todo el que pase por el post, y su único trabajo es

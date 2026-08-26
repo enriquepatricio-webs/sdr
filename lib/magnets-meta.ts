@@ -24,6 +24,7 @@ import {
   RESPUESTA_PUBLICA,
   SIN_MAS_RECORDATORIOS,
   comentariosConLaClave,
+  faltaElRecurso,
   minutosHastaElNudge,
   normalizarUsuario,
   pideQueLeDejen,
@@ -617,7 +618,7 @@ async function entregarRecurso(opciones: {
   // El mismo filtro que el resto del sistema: ninguna cifra de dinero por chat.
   if (mencionaDinero(mensaje)) mensaje = iman.resource;
   // Y el recurso tiene que ir sí o sí: es lo único que se ha prometido.
-  if (!mensaje.includes(iman.resource)) {
+  if (faltaElRecurso(mensaje, iman.resource)) {
     mensaje = `${mensaje}\n\n${iman.resource}`;
   }
 
