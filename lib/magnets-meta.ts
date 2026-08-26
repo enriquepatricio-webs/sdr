@@ -79,36 +79,41 @@ async function atenderUnComentario(o: {
   dijo: string | null;
   ensayo: boolean;
 }): Promise<Record<string, unknown>> {
-  /**
-   * Se intenta saber si ya te sigue, y muchas veces NO se puede.
-   *
-   * Meta responde 230 "User consent is required" cuando esa persona solo ha
-   * comentado: el permiso para leer su perfil nace cuando te escribe. Por eso
-   * hay tres respuestas y no dos, y por eso "no se sabe" nunca se trata como
-   * "no te sigue".
-   */
-  const sigue: boolean | null = o.autorId
-    ? await perfilDeQuienEscribe(o.token, o.autorId)
-        .then((p) => p.is_user_follow_business === true)
-        .catch(() => null)
-    : null;
-
-  const texto = sigue === false ? o.iman.followMessage : PEDIR_FOLLOW_SIN_SABER;
   const publico =
     RESPUESTA_PUBLICA[Math.floor(Date.now() / 1000) % RESPUESTA_PUBLICA.length];
 
   if (o.ensayo) {
+    const sigue = o.autorId
+      ? await perfilDeQuienEscribe(o.token, o.autorId)
+          .then((p) => p.is_user_follow_business === true)
+          .catch(() => null)
+      : null;
     return {
       usuario: o.username,
       comentario: o.dijo,
       sigue,
       publico,
-      privado: sigue === true ? "(el recurso, ya te sigue)" : texto,
+      privado:
+        sigue === true
+          ? "(el recurso, ya te sigue)"
+          : sigue === false
+            ? o.iman.followMessage
+            : PEDIR_FOLLOW_SIN_SABER,
     };
   }
 
-  const respuesta = await responderComentario(o.token, o.commentId, publico);
-
+  /**
+   * Se PIDE EL SITIO antes de escribir nada. Este orden es el arreglo.
+   *
+   * Al mismo comentario se llega por dos caminos —el aviso de Meta y la
+   * relectura de la publicación— y salen del mismo webhook, a la vez. Cuando la
+   * comprobación de "¿ya está atendido?" iba antes de escribir, los dos la
+   * pasaban, los dos contestaban en público y solo entonces fallaba el segundo
+   * al guardar. El resultado se veía en el post: la misma respuesta dos veces.
+   *
+   * El índice único por comentario es lo único que decide de verdad quién lo
+   * atiende. Quien no consigue la fila se retira en silencio y no escribe.
+   */
   const [contacto] = await db
     .insert(magnetContacts)
     .values({
@@ -117,13 +122,36 @@ async function atenderUnComentario(o: {
       fullName: o.fullName,
       commentId: o.commentId,
       providerId: o.autorId,
-      state: sigue === true ? "verificado" : "pidiendo_follow",
-      followAsks: sigue === true ? 0 : 1,
-      verifiedAt: sigue === true ? new Date() : null,
+      state: "pidiendo_follow",
+      followAsks: 0,
     })
+    .onConflictDoNothing()
     .returning();
 
+  if (!contacto) return { usuario: o.username, yaAtendido: true };
+
+  /**
+   * Se intenta saber si ya te sigue, y muchas veces NO se puede.
+   *
+   * Meta responde 230 "User consent is required" cuando esa persona solo ha
+   * comentado: el permiso para leer su perfil nace cuando te escribe. Por eso
+   * hay tres respuestas y no dos, y "no se sabe" nunca se trata como "no te
+   * sigue".
+   */
+  const sigue: boolean | null = o.autorId
+    ? await perfilDeQuienEscribe(o.token, o.autorId)
+        .then((p) => p.is_user_follow_business === true)
+        .catch(() => null)
+    : null;
+
+  const respuesta = await responderComentario(o.token, o.commentId, publico);
+
   if (sigue === true) {
+    await db
+      .update(magnetContacts)
+      .set({ state: "verificado", verifiedAt: new Date() })
+      .where(eq(magnetContacts.id, contacto.id));
+
     const entrega = await entregarRecurso({
       iman: o.iman,
       cuentaId: o.cuentaId,
@@ -147,8 +175,13 @@ async function atenderUnComentario(o: {
     o.token,
     o.igUserId,
     o.commentId,
-    texto,
+    sigue === false ? o.iman.followMessage : PEDIR_FOLLOW_SIN_SABER,
   );
+  await db
+    .update(magnetContacts)
+    .set({ followAsks: 1 })
+    .where(eq(magnetContacts.id, contacto.id));
+
   return {
     usuario: o.username,
     respuestaPublica: respuesta.id,
@@ -157,20 +190,6 @@ async function atenderUnComentario(o: {
   };
 }
 
-
-/**
- * Atiende un comentario a partir del aviso de Meta, sin releer la publicación.
- *
- * Existe por un motivo concreto y caro: cuando promocionas un reel, quien
- * comenta desde el ANUNCIO deja su comentario en otro medio distinto —Meta lo
- * marca como `media_product_type: "AD"`— y `/{publicación}/comments` NO lo
- * devuelve. Releyendo la lista, esos comentarios no existen: el aviso llega, el
- * imán relee, no encuentra nada y esa persona se queda sin recurso para
- * siempre. Si hay campaña detrás, puede ser la mayoría del volumen.
- *
- * El aviso trae todo lo que hace falta —quién, qué puso y en qué publicación—
- * así que se atiende con eso y se acabó la dependencia.
- */
 export async function atenderComentarioDelAviso(
   igUserId: string,
   aviso: {
