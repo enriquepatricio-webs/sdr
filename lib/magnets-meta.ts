@@ -603,6 +603,24 @@ export async function atenderMensaje(
     return { atendido: false, que: "no es de ningún imán" };
   }
 
+  /**
+   * Si alguna vez pidió que le dejaran en paz, no se le vuelve a escribir.
+   *
+   * Aunque ahora diga la palabra del imán. Podría argumentarse que pedir el
+   * recurso ES consentir, pero esa decisión no la puede tomar un automatismo:
+   * una baja que se levanta sola no es una baja. Queda anotado para que una
+   * persona lo mire y conteste a mano si procede.
+   */
+  if (fila.contacto.state === "descartado") {
+    await db.insert(runLogs).values({
+      workflow: "iman",
+      level: "info",
+      message: `@${fila.contacto.username} había pedido que le dejaran en paz y ha vuelto a escribir. No se le contesta automáticamente.`,
+      payload: { igsid, texto: texto.slice(0, 300) },
+    });
+    return { atendido: false, que: "pidió la baja en su momento" };
+  }
+
   // Si pidió que le dejaran en paz, se para aquí y no recibe nada más.
   if (pideQueLeDejen(texto)) {
     await db
