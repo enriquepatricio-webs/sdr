@@ -852,7 +852,21 @@ async function entregarRecurso(opciones: {
    * Se guardan los dos lados: lo que dijo y lo que le mandamos.
    */
   if (leadId) {
+    /**
+     * Un segundo entre lo que dijo y lo que le contestamos.
+     *
+     * Los dos toques se insertan a la vez, y en Postgres `now()` es la hora de
+     * la transacción: con la misma marca, el orden entre ellos queda al azar y
+     * el historial podía leerse al revés, con nuestra respuesta antes que su
+     * pregunta. El agente que recoge la conversación después decide qué decir
+     * leyendo eso.
+     *
+     * Se escribe la marca a mano en vez de dejar el valor por defecto, para que
+     * la que se guarda sea la misma que dice el toque y no la del momento en
+     * que la base de datos ejecutó la inserción.
+     */
     const ahora = new Date();
+    const respondido = new Date(ahora.getTime() + 1000);
     await db.insert(touches).values([
       {
         leadId,
@@ -863,6 +877,7 @@ async function entregarRecurso(opciones: {
         step: 1,
         body: opciones.dijo,
         sentAt: ahora,
+        createdAt: ahora,
       },
       {
         leadId,
@@ -872,7 +887,8 @@ async function entregarRecurso(opciones: {
         status: "enviado" as const,
         step: 1,
         body: mensaje,
-        sentAt: ahora,
+        sentAt: respondido,
+        createdAt: respondido,
       },
     ]);
     // El siguiente mensaje del agente es el segundo, no el primero.
