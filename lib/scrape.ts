@@ -12,6 +12,12 @@
  */
 import { ACTORES_LECTURA, runSync } from './apify'
 
+/**
+ * Cuánto se espera a una web ajena. Corto a propósito: esto va delante de cada
+ * primer mensaje y una web caída no puede frenar la cola.
+ */
+const ESPERA_MS = 12_000
+
 /** Recorta texto a un tamaño que no reviente el prompt ni la factura. */
 function recortar(texto: string, maximo: number): string {
   const limpio = texto.replace(/\s+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
@@ -31,39 +37,90 @@ export async function leerWeb(
 ): Promise<LecturaWeb | null> {
   const limpia = url.trim().startsWith('http') ? url.trim() : `https://${url.trim()}`
 
+  /**
+   * Se descarga la portada y ya está. Sin Apify.
+   *
+   * Antes esto lanzaba `apify/website-content-crawler` con hasta cuatro páginas
+   * y proxy, una vez por CADA lead. Con 231 leads enriquecidos frente a 64
+   * búsquedas de prospección, el enriquecimiento se comía casi cuatro veces más
+   * créditos que la razón por la que se paga Apify.
+   *
+   * Y no hacía falta: lo que se busca aquí es la propuesta de valor y a quién se
+   * dirigen, que está en la portada. Bajarla con `fetch` es gratis y da
+   * prácticamente lo mismo. Los créditos se quedan para conseguir leads, que es
+   * lo que no se puede hacer de otra forma.
+   */
   try {
-    const items = await runSync<{ url?: string; text?: string; markdown?: string; metadata?: { title?: string } }>(
-      ACTORES_LECTURA.web,
-      {
-        startUrls: [{ url: limpia }],
-        maxCrawlPages: opts.maxPaginas ?? 4,
-        crawlerType: 'cheerio',
-        saveMarkdown: true,
-        proxyConfiguration: { useApifyProxy: true },
+    const res = await fetch(limpia, {
+      redirect: 'follow',
+      signal: AbortSignal.timeout(ESPERA_MS),
+      headers: {
+        // Sin un agente reconocible, bastantes webs devuelven 403 y nos
+        // quedaríamos sin contexto creyendo que la web no existe.
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36',
+        Accept: 'text/html,application/xhtml+xml',
       },
-      { maxItems: opts.maxPaginas ?? 4, timeoutSecs: 120 },
-    )
+    })
+    if (!res.ok) return null
+    if (!(res.headers.get('content-type') ?? '').includes('html')) return null
 
-    const texto = items
-      .map((i) => i.markdown ?? i.text ?? '')
-      .filter(Boolean)
-      .join('\n\n---\n\n')
-
+    const html = (await res.text()).slice(0, 400_000)
+    const titulo = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.trim()
+    const texto = textoDeHtml(html)
     if (!texto.trim()) return null
+
     return {
       url: limpia,
-      titulo: items[0]?.metadata?.title,
+      titulo: titulo || undefined,
       texto: recortar(texto, opts.maxCaracteres ?? 6000),
     }
   } catch {
+    // Una web caída, un certificado malo o un timeout no son un error nuestro:
+    // se escribe con menos contexto y se sigue.
     return null
   }
 }
 
+/**
+ * El texto visible de una página, sin etiquetas.
+ *
+ * No es un analizador de HTML y no pretende serlo: quita lo que no se lee
+ * —guiones, estilos, cabeceras de navegación— y deja las frases. Para decidir
+ * qué vende una empresa es más que suficiente.
+ */
+function textoDeHtml(html: string): string {
+  return html
+    .replace(/<(script|style|noscript|svg|head)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<\/(p|div|li|h[1-6]|section|article|br)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&(quot|#34);/g, '"')
+    .replace(/&(apos|#39);/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n\s*\n\s*\n+/g, '\n\n')
+    .trim()
+}
+
 export type LecturaPerfil = { texto: string; datos: Record<string, unknown> }
 
-/** Lee un perfil de LinkedIn. Sin cookies: no arriesga la cuenta del usuario. */
+/**
+ * Lee un perfil de LinkedIn. Sin cookies: no arriesga la cuenta del usuario.
+ *
+ * Apagado por defecto. Es el único lector que sigue costando créditos de Apify
+ * —un perfil de LinkedIn no se puede bajar con un `fetch`, hace falta alguien
+ * que lo resuelva— y esos créditos se reservan para conseguir leads, que es lo
+ * que no se puede hacer de ninguna otra forma.
+ *
+ * Con esto apagado el agente escribe con el titular y la empresa, que es lo que
+ * ya trae el lead. Para volver a encenderlo: APIFY_PERFILES=1.
+ */
 export async function leerPerfilLinkedin(url: string): Promise<LecturaPerfil | null> {
+  if (process.env.APIFY_PERFILES !== '1') return null
   try {
     const items = await runSync<Record<string, any>>(
       ACTORES_LECTURA.perfilLinkedin,
