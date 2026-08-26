@@ -244,6 +244,20 @@ export function minutosEntreLecturas(
 export const MAX_PETICIONES_DE_FOLLOW = 5;
 
 /**
+ * Cuánto se espera antes de recordarle que siga, si no ha dicho nada.
+ *
+ * Dos horas: lo que tarda alguien en volver al móvil sin que parezca que le
+ * estás persiguiendo. Antes solo se le recordaba cuando VOLVÍA a escribir, así
+ * que quien comentaba y se olvidaba no recibía nunca nada más.
+ *
+ * Ojo con lo que esto puede y no puede hacer: si esa persona nunca ha aceptado
+ * la solicitud de mensaje, Instagram no deja mandarle nada —"podrás enviar más
+ * mensajes cuando se acepte tu invitación para chatear"— y el recordatorio no
+ * sale. Se intenta igual, porque en cuanto la acepte sí entrará.
+ */
+export const HORAS_HASTA_EL_RECORDATORIO = 2;
+
+/**
  * Lo que se contesta cuando ya se han gastado los recordatorios.
  *
  * Se deja de pedir el follow, pero no se deja de responder: se le da salida a
