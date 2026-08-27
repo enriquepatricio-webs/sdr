@@ -311,3 +311,31 @@ if (fallos.length) {
   process.exit(1)
 }
 console.log('Workflows de n8n verificados.')
+
+/**
+ * Contestar en diez segundos delata que detras hay una maquina.
+ *
+ * La espera va DESPUES de registrar el entrante y de filtrar ecos: el mensaje
+ * aparece en el panel al instante y solo se retrasa la respuesta, y no se
+ * gastan dos minutos en un eco que iba a descartarse igual.
+ */
+prueba('W2 espera antes de contestar, y no antes de registrar', () => {
+  const w = workflows['sdr-inbound']
+  const espera = w.nodes.find((n) => n.type.includes('wait'))
+  assert.ok(espera, 'W2 contesta al instante: falta la espera')
+  assert.match(
+    String((espera.parameters as { amount?: unknown })?.amount ?? ''),
+    /Math\.random/,
+    'la espera es fija; un intervalo exacto se nota igual que no esperar',
+  )
+
+  // El orden importa: el registro del entrante va antes que la espera.
+  const antes = Object.entries(w.connections).find(([, tipos]) =>
+    (tipos.main ?? []).some((s) => s.some((c) => c.node === espera.name)),
+  )?.[0]
+  assert.equal(
+    antes,
+    'Nuevo y no congelado',
+    'la espera se ha movido: tiene que ir despues de registrar y filtrar',
+  )
+})

@@ -420,6 +420,20 @@
         240
       ],
       "parameters": {}
+    },
+    {
+      "parameters": {
+        "amount": "={{ Math.floor(Math.random() * 41) + 100 }}"
+      },
+      "id": "esperar-2min-antes-de-contestar",
+      "name": "Esperar ~2 min",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1210,
+        0
+      ],
+      "notes": "Contestar al instante delata a la maquina. Va despues de registrar el entrante y de filtrar ecos: el mensaje se ve en el panel enseguida y solo se retrasa la respuesta. Aleatorio 100-140 s; el agente suma ~15 s al redactar."
     }
   ],
   "connections": {
@@ -489,7 +503,7 @@
       "main": [
         [
           {
-            "node": "Playbook activo",
+            "node": "Esperar ~2 min",
             "type": "main",
             "index": 0
           }
@@ -597,6 +611,17 @@
           {
             "node": "Agente SDR",
             "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Esperar ~2 min": {
+      "main": [
+        [
+          {
+            "node": "Playbook activo",
+            "type": "main",
             "index": 0
           }
         ]
