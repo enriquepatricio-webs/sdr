@@ -96,3 +96,56 @@ export async function campanaDelImanId(
     .returning({ id: campaigns.id });
   return nueva.id;
 }
+
+/**
+ * La campaña por la que se contesta a alguien que escribe a una cuenta y ya era
+ * un lead nuestro, pero de otra parte.
+ *
+ * Pasa de verdad: a un prospecto se le escribió en frío desde una cuenta, y
+ * meses después contesta a OTRA —la que ve en un anuncio, o la que le sale al
+ * buscar la marca—. Su lead sigue colgando de la campaña vieja, cuya cuenta
+ * puede estar pausada o ni siquiera autorizada en Meta, y entonces la respuesta
+ * no puede salir por ningún sitio.
+ *
+ * La conversación pertenece a la cuenta donde está ocurriendo, no a la que
+ * empezó. Se mueve el lead aquí y se le contesta desde donde escribió.
+ */
+export async function campanaDeConversaciones(opciones: {
+  cuentaId: string;
+  workspaceId: string;
+  usuario: string;
+}): Promise<string> {
+  const nombre = `Conversaciones · @${opciones.usuario}`;
+  const [existente] = await db
+    .select({ id: campaigns.id })
+    .from(campaigns)
+    .where(
+      and(
+        eq(campaigns.workspaceId, opciones.workspaceId),
+        eq(campaigns.name, nombre),
+      ),
+    );
+  if (existente) return existente.id;
+
+  const [nueva] = await db
+    .insert(campaigns)
+    .values({
+      name: nombre,
+      // En marcha: aquí no se prospecta a nadie, solo se responde a quien ya ha
+      // escrito. Pausarla sería dejar de contestar, que no es lo mismo que
+      // dejar de buscar.
+      status: "running",
+      playbookId: (await playbookActivo(opciones.workspaceId))?.id ?? null,
+      workspaceId: opciones.workspaceId,
+      accountId: opciones.cuentaId,
+      channel: "instagram",
+      sendingWindow: {
+        tz: "Europe/Madrid",
+        from: "09:00",
+        to: "21:00",
+        days: [1, 2, 3, 4, 5, 6, 7],
+      },
+    })
+    .returning({ id: campaigns.id });
+  return nueva.id;
+}

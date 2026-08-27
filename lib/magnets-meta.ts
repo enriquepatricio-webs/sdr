@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "./db";
 import {
   accounts,
+  campaigns,
   leadMagnets,
   leads,
   magnetContacts,
@@ -34,7 +35,10 @@ import {
 } from "./magnets";
 import { chat } from "./openrouter";
 import { promptDeCampana } from "./playbook";
-import { campanaDelImanId } from "./magnets-campana";
+import {
+  campanaDeConversaciones,
+  campanaDelImanId,
+} from "./magnets-campana";
 import { ajustesEfectivos } from "./workspace";
 import { mencionaDinero } from "./sin-precios";
 
@@ -617,6 +621,83 @@ async function fichaPorPalabraEnMensaje(
   return fila ?? null;
 }
 
+/**
+ * Contesta a alguien que ya era lead nuestro aunque no venga de ningún imán.
+ *
+ * Devuelve null si no se le reconoce; entonces sigue el camino de siempre.
+ */
+async function atenderLeadConocido(
+  igsid: string,
+  texto: string,
+  igUserId: string,
+): Promise<{ atendido: boolean; que: string; detalle?: string } | null> {
+  const [cuentaFila] = await db
+    .select()
+    .from(accounts)
+    .where(eq(accounts.igUserId, igUserId));
+  if (!cuentaFila?.workspaceId) return null;
+
+  const cuenta = await tokenDeCuenta(cuentaFila.id);
+  if (!cuenta) return null;
+
+  const perfil = await perfilDeQuienEscribe(cuenta.token, igsid).catch(
+    () => null,
+  );
+  if (!perfil?.username) return null;
+  const usuario = normalizarUsuario(perfil.username);
+
+  const [fila] = await db
+    .select({ lead: leads, campana: campaigns, cuentaDelLead: accounts })
+    .from(leads)
+    .innerJoin(campaigns, eq(campaigns.id, leads.campaignId))
+    .leftJoin(accounts, eq(accounts.id, campaigns.accountId))
+    .where(eq(leads.instagramUsername, usuario));
+  if (!fila) return null;
+
+  /**
+   * Si la cuenta de su campaña ya no puede enviar, la conversación se muda a
+   * la cuenta donde está escribiendo. No es un capricho: el envío saca la
+   * cuenta de la campaña, así que dejarlo donde está es garantizar que la
+   * respuesta no salga.
+   */
+  const puedeEnviarDesdeSuCampana =
+    fila.cuentaDelLead?.id === cuentaFila.id ||
+    (fila.cuentaDelLead?.status === "active" &&
+      Boolean(fila.cuentaDelLead?.metaToken));
+
+  if (!puedeEnviarDesdeSuCampana) {
+    const campaignId = await campanaDeConversaciones({
+      cuentaId: cuentaFila.id,
+      workspaceId: cuentaFila.workspaceId,
+      usuario: cuenta.username ?? cuentaFila.displayName,
+    });
+    await db
+      .update(leads)
+      .set({ campaignId })
+      .where(eq(leads.id, fila.lead.id));
+  }
+
+  // El identificador de Meta, para que la próxima vez case sin preguntar.
+  await db
+    .update(leads)
+    .set({ providerId: igsid })
+    .where(eq(leads.id, fila.lead.id));
+
+  const entregado = await pasarAlAgente(fila.lead.id, igsid, texto);
+  await db.insert(runLogs).values({
+    workflow: "iman",
+    level: entregado ? "info" : "error",
+    message: entregado
+      ? `@${usuario} no es de ningún imán pero ya era lead: lo lleva el agente.`
+      : `@${usuario} ya era lead y el agente no recogió su mensaje.`,
+    payload: { igsid, leadId: fila.lead.id, movido: !puedeEnviarDesdeSuCampana },
+  });
+
+  return entregado
+    ? { atendido: true, que: "ya era lead: lo lleva el agente" }
+    : { atendido: false, que: "ya era lead, pero el agente no lo recogió" };
+}
+
 export async function atenderMensaje(
   igsid: string,
   texto: string,
@@ -721,6 +802,24 @@ export async function atenderMensaje(
         }
       }
     }
+  }
+
+  /**
+   * No es de ningún imán, pero puede ser un lead que ya conocemos.
+   *
+   * A un prospecto se le escribió en frío desde una cuenta y meses después
+   * contesta a OTRA: la que ve en un anuncio, o la que le sale al buscar la
+   * marca. Su lead sigue colgando de la campaña vieja, y esta vía solo miraba
+   * contactos de imán, así que se quedaba sin respuesta.
+   *
+   * Se le reconoce por su nombre de usuario, se le graba el identificador de
+   * Meta para que la próxima vez case directo, y se mueve la conversación a la
+   * cuenta donde de verdad está ocurriendo — si la de origen ya no puede
+   * enviar, contestarle desde ella es imposible.
+   */
+  if (!fila && igUserId && !pideQueLeDejen(texto)) {
+    const atendido = await atenderLeadConocido(igsid, texto, igUserId);
+    if (atendido) return atendido;
   }
 
   if (!fila) {
