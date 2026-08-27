@@ -412,7 +412,7 @@ async function pasarAlAgente(
   const webhook = process.env.N8N_INBOUND_WEBHOOK_URL;
   if (!webhook || !leadId) return false;
   try {
-    await fetch(webhook, {
+    const res = await fetch(webhook, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -425,6 +425,28 @@ async function pasarAlAgente(
         origen: "instagram-meta",
       }),
     });
+
+    /**
+     * Mirar el código de respuesta, no solo que la petición no reventara.
+     *
+     * Esto devolvía `true` con cualquier respuesta, incluido un 404. Y n8n da
+     * 404 cuando la URL configurada es la de PRUEBA —`/webhook-test/`— que solo
+     * vale para una llamada justo después de pulsar "Execute workflow" en el
+     * canvas. Con esa URL puesta, cada persona que contestaba se quedaba sin
+     * respuesta mientras el registro decía "lo lleva el agente".
+     *
+     * Estuvo así un día entero. El fallo no fue la URL: fue dar por bueno un
+     * 404.
+     */
+    if (!res.ok) {
+      await db.insert(runLogs).values({
+        workflow: "iman",
+        level: "error",
+        message: `El agente no recogió el mensaje: n8n respondió ${res.status}. Revisa N8N_INBOUND_WEBHOOK_URL.`,
+        payload: { igsid, estado: res.status },
+      });
+      return false;
+    }
     return true;
   } catch {
     /**
