@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { and, count, eq } from "drizzle-orm";
+import { and, count, desc, eq, gte } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import {
@@ -29,6 +29,15 @@ import { AVISO_SIN_PRECIOS, mencionaDinero } from "@/lib/sin-precios";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+
+/**
+ * Cuánto tiene que pasar entre dos mensajes nuestros a la misma persona.
+ *
+ * No es un tope de volumen —de eso se encarga la cuota— es de decencia: dos
+ * mensajes con segundos de diferencia delatan a la máquina más que cualquier
+ * otra cosa.
+ */
+export const MINUTOS_ENTRE_MENSAJES = 5;
 
 /** Fallos de envío seguidos antes de apartar un lead como irrecuperable. */
 const MAX_FALLOS_POR_LEAD = 3;
@@ -64,6 +73,21 @@ export const DESTINATARIO_IMPOSIBLE = ["invalid_recipient", "user_unreachable"];
  * y quien se aparta es la cuenta, hasta que el proveedor la suelte.
  */
 export const CUENTA_FRENADA = "cannot_resend_yet";
+
+/**
+ * Esta persona YA tiene nuestra invitación.
+ *
+ * Se parece a `cannot_resend_yet` y no es lo mismo, y la diferencia es todo:
+ * aquel habla de la cuenta —"has llegado a un tope temporal"— y este del
+ * destinatario, con estas palabras: "An invitation has already been sent
+ * recently to this recipient".
+ *
+ * Aquí sí toca sacarlo de la cola. No es un fallo: ese prospecto tiene nuestro
+ * mensaje esperando en sus invitaciones, y volver a intentarlo es pedirle a
+ * LinkedIn invitar dos veces a la misma persona, que es justo el patrón por el
+ * que restringen cuentas.
+ */
+export const YA_TIENE_LA_INVITACION = "already_invited_recently";
 
 /**
  * Cuánto se aparta una cuenta frenada.
@@ -177,6 +201,47 @@ export async function POST(request: Request) {
     if (!cuenta) return jsonError("La campaña no tiene cuenta de envío.", 409);
     if (cuenta.status !== "active") {
       return jsonError(`La cuenta está en "${cuenta.status}".`, 409);
+    }
+
+    /**
+     * Ni dos mensajes seguidos a la misma persona.
+     *
+     * Cuando llegan dos entrantes casi a la vez —pasa con los autorespondedores
+     * y con las cuentas que tienen su propio bot— cada uno dispara su propia
+     * respuesta, y salían dos mensajes nuestros con dos segundos de diferencia.
+     * Ocurrió diez veces. Desde el otro lado eso no se lee como atento: se lee
+     * como una máquina atascada.
+     *
+     * Cinco minutos no estorban a nada legítimo: el seguimiento va a días vista
+     * y el "¿qué tal?" del imán a más de media hora. Y va aquí, en la única
+     * puerta de salida, para que valga igual venga de donde venga.
+     */
+    const [reciente] = await db
+      .select({ cuando: touches.sentAt })
+      .from(touches)
+      .where(
+        and(
+          eq(touches.leadId, lead.id),
+          eq(touches.direction, "out"),
+          eq(touches.status, "enviado"),
+          gte(touches.sentAt, new Date(Date.now() - MINUTOS_ENTRE_MENSAJES * 60_000)),
+        ),
+      )
+      .orderBy(desc(touches.sentAt))
+      .limit(1);
+
+    if (reciente) {
+      await db.insert(runLogs).values({
+        workflow: "sdr-envio",
+        leadId: lead.id,
+        level: "info",
+        message: `No se manda: ya se le escribió hace menos de ${MINUTOS_ENTRE_MENSAJES} minutos.`,
+        payload: { texto: d.texto.slice(0, 300) },
+      });
+      return jsonError(
+        `Ya se le escribió hace menos de ${MINUTOS_ENTRE_MENSAJES} minutos. Espera a que conteste.`,
+        429,
+      );
     }
 
     // El autopiloto es el de LA EMPRESA de esta campaña, no uno global. Con
@@ -484,7 +549,22 @@ export async function POST(request: Request) {
        */
       const tipo = tipoDeErrorUnipile(err);
 
-      if (tipo === CUENTA_FRENADA) {
+      if (tipo === YA_TIENE_LA_INVITACION) {
+        /**
+         * Ya está contactado de verdad: sale de la cola sin pasar por 'error'.
+         * Y el toque se borra, porque el mensaje que cuenta ya se le mandó en
+         * su momento; dejar un fallido aquí lo acercaría a un 'error' que no ha
+         * merecido.
+         */
+        await db.delete(touches).where(eq(touches.id, toque.id));
+        await db
+          .update(leads)
+          .set({
+            status: lead.status === "nuevo" ? "contactado" : lead.status,
+            nextActionAt: null,
+          })
+          .where(eq(leads.id, lead.id));
+      } else if (tipo === CUENTA_FRENADA) {
         /**
          * El lead no ha hecho nada mal: se queda como estaba y vuelve a la cola
          * cuando la cuenta esté libre. Lo que se aparta es la cuenta, porque el

@@ -25,6 +25,7 @@ import {
 import {
   DESTINATARIO_IMPOSIBLE,
   CUENTA_FRENADA,
+  YA_TIENE_LA_INVITACION,
   tipoDeErrorUnipile,
 } from "../app/api/messages/send/route";
 
@@ -571,6 +572,8 @@ const CUERPOS = {
   // cosa del destinatario saco de la cola a 62 prospectos sin escribirles.
   cannot_resend_yet:
     '{"status":422,"type":"errors/cannot_resend_yet","title":"Cannot resend yet","detail":"You have reached a temporary provider limit. Please try again later."}',
+  already_invited_recently:
+    '{"status":422,"type":"errors/already_invited_recently","title":"Should delay new invitation to this recipient","detail":"An invitation has already been sent recently to this recipient. Please try again later."}',
   provider_error:
     '{"status":500,"type":"errors/provider_error","title":"Provider error","detail":"..."}',
 };
@@ -603,6 +606,26 @@ await prueba("un perfil bloqueado no se reintenta; un 500 sí", () => {
     tipoDeErrorUnipile(new UnipileError("x", 422, CUERPOS.cannot_resend_yet)),
     CUENTA_FRENADA,
   );
+});
+
+/**
+ * Los dos errores de LinkedIn se parecen y significan lo contrario.
+ *
+ * `cannot_resend_yet` habla de la CUENTA: el lead vuelve a la cola y se aparta
+ * la cuenta. `already_invited_recently` habla del DESTINATARIO: esa persona ya
+ * tiene la invitacion y sale de la cola como contactada. Confundirlos en un
+ * sentido quema leads buenos; en el otro, invita dos veces a la misma persona.
+ */
+prueba("el tope de la cuenta y 'ya invitado' no son lo mismo", () => {
+  assert.notEqual(CUENTA_FRENADA, YA_TIENE_LA_INVITACION);
+  assert.equal(
+    tipoDeErrorUnipile(
+      new UnipileError("x", 422, CUERPOS.already_invited_recently),
+    ),
+    YA_TIENE_LA_INVITACION,
+  );
+  // Y ninguno de los dos es un destinatario imposible: no van a 'error'.
+  assert.ok(!DESTINATARIO_IMPOSIBLE.includes(YA_TIENE_LA_INVITACION));
 });
 
 console.log(`\n${ok} comprobaciones correctas`);
