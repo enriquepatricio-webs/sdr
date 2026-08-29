@@ -30,14 +30,6 @@ import { AVISO_SIN_PRECIOS, mencionaDinero } from "@/lib/sin-precios";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-/**
- * Cuánto tiene que pasar entre dos mensajes nuestros a la misma persona.
- *
- * No es un tope de volumen —de eso se encarga la cuota— es de decencia: dos
- * mensajes con segundos de diferencia delatan a la máquina más que cualquier
- * otra cosa.
- */
-export const MINUTOS_ENTRE_MENSAJES = 5;
 
 /** Fallos de envío seguidos antes de apartar un lead como irrecuperable. */
 const MAX_FALLOS_POR_LEAD = 3;
@@ -204,44 +196,56 @@ export async function POST(request: Request) {
     }
 
     /**
-     * Ni dos mensajes seguidos a la misma persona.
+     * No se contesta dos veces al mismo mensaje.
      *
      * Cuando llegan dos entrantes casi a la vez —pasa con los autorespondedores
      * y con las cuentas que tienen su propio bot— cada uno dispara su propia
      * respuesta, y salían dos mensajes nuestros con dos segundos de diferencia.
-     * Ocurrió diez veces. Desde el otro lado eso no se lee como atento: se lee
-     * como una máquina atascada.
      *
-     * Cinco minutos no estorban a nada legítimo: el seguimiento va a días vista
-     * y el "¿qué tal?" del imán a más de media hora. Y va aquí, en la única
-     * puerta de salida, para que valga igual venga de donde venga.
+     * El primer intento de arreglarlo fue prohibir dos envíos en cinco minutos,
+     * y estaba mal: bloqueó una respuesta buena a alguien que contestó rápido y
+     * se quedó esperando cincuenta minutos. En una conversación viva, contestar
+     * seguido no es un fallo: es la conversación.
+     *
+     * Lo que hay que impedir es otra cosa: mandar algo cuando su último mensaje
+     * YA tiene respuesta. Eso ataja los dobles sin tocar un ida y vuelta real, y
+     * no estorba a la prospección en frío ni al seguimiento, donde no hay
+     * ningún entrante al que contestar.
      */
-    const [reciente] = await db
-      .select({ cuando: touches.sentAt })
+    const [ultimoEntrante] = await db
+      .select({ cuando: touches.createdAt })
       .from(touches)
-      .where(
-        and(
-          eq(touches.leadId, lead.id),
-          eq(touches.direction, "out"),
-          eq(touches.status, "enviado"),
-          gte(touches.sentAt, new Date(Date.now() - MINUTOS_ENTRE_MENSAJES * 60_000)),
-        ),
-      )
-      .orderBy(desc(touches.sentAt))
+      .where(and(eq(touches.leadId, lead.id), eq(touches.direction, "in")))
+      .orderBy(desc(touches.createdAt))
       .limit(1);
 
-    if (reciente) {
-      await db.insert(runLogs).values({
-        workflow: "sdr-envio",
-        leadId: lead.id,
-        level: "info",
-        message: `No se manda: ya se le escribió hace menos de ${MINUTOS_ENTRE_MENSAJES} minutos.`,
-        payload: { texto: d.texto.slice(0, 300) },
-      });
-      return jsonError(
-        `Ya se le escribió hace menos de ${MINUTOS_ENTRE_MENSAJES} minutos. Espera a que conteste.`,
-        429,
-      );
+    if (ultimoEntrante) {
+      const [yaContestado] = await db
+        .select({ id: touches.id })
+        .from(touches)
+        .where(
+          and(
+            eq(touches.leadId, lead.id),
+            eq(touches.direction, "out"),
+            eq(touches.status, "enviado"),
+            gte(touches.sentAt, ultimoEntrante.cuando),
+          ),
+        )
+        .limit(1);
+
+      if (yaContestado) {
+        await db.insert(runLogs).values({
+          workflow: "sdr-envio",
+          leadId: lead.id,
+          level: "info",
+          message: "No se manda: su último mensaje ya tiene respuesta.",
+          payload: { texto: d.texto.slice(0, 300) },
+        });
+        return jsonError(
+          "Su último mensaje ya tiene respuesta. Espera a que vuelva a escribir.",
+          429,
+        );
+      }
     }
 
     // El autopiloto es el de LA EMPRESA de esta campaña, no uno global. Con
