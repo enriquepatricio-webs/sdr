@@ -651,10 +651,27 @@ export async function POST(request: Request) {
             .where(eq(leads.id, lead.id));
         }
       }
+      /**
+       * Un caso previsto y ya resuelto no es un error.
+       *
+       * Los tres de arriba tienen su camino escrito: la cuenta se aparta, el
+       * lead vuelve a la cola o se da por contactado. Se registraban igual como
+       * 'error', y el vigilante despierta a alguien por cada error. O sea que
+       * el sistema se apañaba solo y aun asi mandaba un aviso a Telegram.
+       *
+       * Un canal que avisa de lo que ya esta resuelto se acaba silenciando, y
+       * entonces deja de avisar de lo que no. Queda registrado como aviso: se
+       * puede consultar, no te despierta.
+       */
+      const previsto =
+        tipo === YA_TIENE_LA_INVITACION ||
+        tipo === CUENTA_FRENADA ||
+        (tipo != null && DESTINATARIO_IMPOSIBLE.includes(tipo));
+
       await db.insert(runLogs).values({
         workflow: "sdr-envio",
         leadId: lead.id,
-        level: "error",
+        level: previsto ? "warn" : "error",
         message: `Falló el envío: ${err instanceof Error ? err.message : String(err)}`,
         payload: { touchId: toque.id, noSeReintenta: true, tipo },
       });
