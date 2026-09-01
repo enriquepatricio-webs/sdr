@@ -18,7 +18,16 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const accountId = url.searchParams.get("state");
-  const panel = new URL("/empresa", url.origin);
+  /**
+   * El panel al que se vuelve sale del dominio declarado, por lo mismo que la
+   * URL de retorno: detrás del proxy, `url.origin` es `localhost:3000` y la
+   * autorización terminaba echando a la persona a una página que no existe.
+   *
+   * Lo peor de ese fallo era que mentía: la cuenta quedaba conectada y con su
+   * token guardado, pero lo último que veías era "no se puede acceder a este
+   * sitio web". Parecía que no había funcionado.
+   */
+  const panel = new URL("/empresa", process.env.NEXT_PUBLIC_APP_URL ?? url.origin);
 
   // Instagram devuelve el motivo cuando la persona cancela o falta un permiso.
   const error =
