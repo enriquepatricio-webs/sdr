@@ -6,6 +6,7 @@ import { accounts, leadMagnets, magnetContacts } from '@/lib/db/schema'
 import { jsonError, parseBody, serverError } from '@/lib/api'
 import { MENCIONA_DINERO } from '@/lib/sin-precios'
 import { obtenerWorkspace, workspaceActivo } from '@/lib/workspace'
+import { mediaDeUrl } from '@/lib/instagram'
 
 export const dynamic = 'force-dynamic'
 
@@ -100,6 +101,35 @@ export async function POST(request: Request) {
         `Antes hay que decir cuál es el @usuario de Instagram de "${cuenta.displayName}". Se pone en Ajustes → La empresa. Sin él no se puede comprobar quién te sigue y el recurso no se entregaría nunca.`,
         409,
       )
+    }
+
+    /**
+     * La publicación tiene que ser DE ESA CUENTA.
+     *
+     * Un imán apuntando al reel de otra cuenta se guarda tan contento, se pinta
+     * activo en el panel y no hace nada: la vuelta periódica no encuentra la
+     * publicación y deja un aviso cada dos minutos que nadie mira. Parece que
+     * funciona y no ha llegado ni un comentario.
+     *
+     * Pasa con toda naturalidad al conectar una cuenta nueva y crear el imán
+     * seguido, porque el desplegable sigue en la de antes.
+     *
+     * Si Meta no contesta se deja pasar: no se bloquea crear un imán porque su
+     * API tenga un mal minuto, y de eso ya avisa la vuelta periódica.
+     */
+    if (cuenta.metaToken) {
+      let publicacionSuya: boolean
+      try {
+        publicacionSuya = (await mediaDeUrl(cuenta.metaToken, d.postUrl)) !== null
+      } catch {
+        publicacionSuya = true
+      }
+      if (!publicacionSuya) {
+        return jsonError(
+          `Esa publicación no es de @${cuenta.instagramUsername}. Comprueba que has elegido la cuenta correcta y que el enlace es de un post o reel suyo ya publicado.`,
+          409,
+        )
+      }
     }
 
     const [creado] = await db
