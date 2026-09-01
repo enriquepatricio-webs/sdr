@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { and, count, desc, eq, gte } from "drizzle-orm";
+import { and, count, desc, eq, gte, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import {
@@ -124,6 +124,23 @@ const cuerpo = z.object({
     ])
     .optional(),
 });
+
+/**
+ * El hilo que ya exista con este lead, si lo hay.
+ *
+ * El `chat_id` llega en la petición cuando quien escribe es el flujo de
+ * entrantes, que lo tiene a mano. Los demás flujos no lo pasan, así que hay que
+ * ir a buscarlo: el toque entrante lo guardó al registrarlo.
+ */
+async function hiloConocido(leadId: string): Promise<string | null> {
+  const [previo] = await db
+    .select({ chat: touches.unipileChatId })
+    .from(touches)
+    .where(and(eq(touches.leadId, leadId), isNotNull(touches.unipileChatId)))
+    .orderBy(desc(touches.createdAt))
+    .limit(1);
+  return previo?.chat ?? null;
+}
 
 /**
  * Enviar un mensaje. Es el único camino por el que sale texto hacia una persona.
@@ -306,6 +323,29 @@ export async function POST(request: Request) {
           cuerpo: d.texto,
         });
         messageId = r.message_id;
+      } else if (campana.channel === "linkedin" && (chatId ??= await hiloConocido(lead.id))) {
+        /**
+         * Si ya hay hilo con esta persona, se responde EN EL HILO.
+         *
+         * Va antes que todo lo demás porque la pregunta "¿invito o escribo?" no
+         * se contesta mirando el grado de conexión, se contesta mirando si ya
+         * hay conversación. Alguien puede contestar a la nota de la invitación
+         * sin aceptarla: sigue siendo de segundo grado y sin embargo ya te está
+         * hablando.
+         *
+         * Ese caso acababa en `invitar`, y LinkedIn respondía
+         * `already_invited_recently`. O sea: la respuesta se perdía justo con
+         * quien había dado el paso de contestar, y el error decía que el
+         * problema era la invitación cuando el problema era estar invitando.
+         */
+        const r = await enviarEnConversacion({
+          accountId: cuenta.unipileAccountId,
+          providerId: lead.providerId,
+          chatId,
+          texto: d.texto,
+        });
+        messageId = r.message_id;
+        chatId = r.chat_id;
       } else if (campana.channel === "linkedin") {
         /**
          * En LinkedIn, en frío, se INVITA. No se manda un DM.
