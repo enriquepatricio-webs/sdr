@@ -655,13 +655,9 @@ export async function POST(request: Request) {
        * Un caso previsto y ya resuelto no es un error.
        *
        * Los tres de arriba tienen su camino escrito: la cuenta se aparta, el
-       * lead vuelve a la cola o se da por contactado. Se registraban igual como
-       * 'error', y el vigilante despierta a alguien por cada error. O sea que
-       * el sistema se apañaba solo y aun asi mandaba un aviso a Telegram.
-       *
-       * Un canal que avisa de lo que ya esta resuelto se acaba silenciando, y
-       * entonces deja de avisar de lo que no. Queda registrado como aviso: se
-       * puede consultar, no te despierta.
+       * lead vuelve a la cola o se da por contactado. Registrarlos como 'error'
+       * mezclaba lo que el sistema ya resolvió con lo que de verdad falló, y en
+       * el registro los errores reales quedaban enterrados entre ellos.
        */
       const previsto =
         tipo === YA_TIENE_LA_INVITACION ||

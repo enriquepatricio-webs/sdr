@@ -10,7 +10,6 @@ export type Settings = {
   /** OFF por defecto. Con esto apagado el agente redacta pero no envía. */
   autopilot: boolean
   openrouterModel: string
-  telegramChatId: string
   companyName: string
   /**
    * Reabastecimiento automático: cuando una campaña se queda sin leads, el
@@ -42,7 +41,6 @@ export type Settings = {
 export const DEFAULT_SETTINGS: Settings = {
   autopilot: false,
   openrouterModel: 'anthropic/claude-sonnet-5',
-  telegramChatId: '',
   companyName: 'Tu Empresa',
   autoProspect: false,
   autoProspectMinLeads: 20,
@@ -56,7 +54,6 @@ export const DEFAULT_SETTINGS: Settings = {
 const KEYS = {
   autopilot: 'autopilot',
   openrouterModel: 'openrouter_model',
-  telegramChatId: 'telegram_chat_id',
   companyName: 'company_name',
   autoProspect: 'auto_prospect',
   autoProspectMinLeads: 'auto_prospect_min_leads',
@@ -84,8 +81,6 @@ export async function getSettings(): Promise<Settings> {
   return {
     autopilot: read('autopilot') === true,
     openrouterModel: String(read('openrouterModel')),
-    // La tabla manda sobre el entorno; si está vacía, se cae al env.
-    telegramChatId: String(read('telegramChatId') || process.env.TELEGRAM_CHAT_ID || ''),
     companyName: String(read('companyName')),
     autoProspect: read('autoProspect') === true,
     autoProspectMinLeads: Number(read('autoProspectMinLeads')),

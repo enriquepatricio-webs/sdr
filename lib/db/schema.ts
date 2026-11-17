@@ -96,7 +96,7 @@ export type Qualification = {
   score: number
   verdict: 'cualificado' | 'descartado' | 'pendiente'
   reasoning: string
-  /** Resumen de una línea, es lo que sale en el aviso de Telegram. */
+  /** Resumen de una línea del porqué. */
   summary?: string
   answers?: QualificationAnswer[]
   disqualified_by?: string

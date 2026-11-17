@@ -25,11 +25,9 @@ const DETALLE = [
 export function Ajustes({
   ajustes: iniciales,
   campanasActivas,
-  tieneTelegramEnv,
 }: {
   ajustes: AjustesEfectivos
   campanasActivas: number
-  tieneTelegramEnv: boolean
 }) {
   const router = useRouter()
   const [ajustes, setAjustes] = useState(iniciales)
@@ -38,9 +36,6 @@ export function Ajustes({
   const [aviso, setAviso] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [confirmandoAutopiloto, setConfirmando] = useState(false)
-  const [buscandoChat, setBuscandoChat] = useState(false)
-  const [chats, setChats] = useState<{ id: string; tipo: string; nombre: string }[] | null>(null)
-  const [pistaChat, setPistaChat] = useState<string | null>(null)
 
   useEffect(() => {
     fetch('/api/openrouter/models')
@@ -64,26 +59,6 @@ export function Ajustes({
         router.refresh()
       } else setError((await res.json()).error ?? 'No se pudo guardar.')
     })
-  }
-
-  async function identificarChat() {
-    setBuscandoChat(true)
-    setChats(null)
-    setPistaChat(null)
-    try {
-      const res = await fetch('/api/telegram/identify')
-      const json = await res.json()
-      if (!res.ok) {
-        setPistaChat(json.error ?? 'No se pudo consultar Telegram.')
-        return
-      }
-      setChats(json.chats ?? [])
-      if (!json.chats?.length) {
-        setPistaChat(json.pista ?? 'Escríbele /start al bot y vuelve a pulsar.')
-      }
-    } finally {
-      setBuscandoChat(false)
-    }
   }
 
   const modeloActual = modelos?.find((m) => m.id === ajustes.openrouterModel)
@@ -169,79 +144,6 @@ export function Ajustes({
                 </button>
               </div>
             </div>
-          )}
-        </div>
-
-        {/* Telegram: por dónde te avisa. */}
-        <div className="border border-linea bg-lienzo p-5">
-          <label htmlFor="telegram" className="text-base font-semibold">
-            Avisos por Telegram
-          </label>
-          <p className="mt-0.5 text-sm text-tenue">
-            {tieneTelegramEnv
-              ? 'Hay uno en el entorno. Lo que pongas aquí manda sobre él.'
-              : 'Escríbele algo a tu bot y pulsa Identificar: el número lo saca él.'}
-          </p>
-          <div className="mt-2 flex gap-2">
-            <input
-              id="telegram"
-              value={ajustes.telegramChatId}
-              onChange={(e) => setAjustes({ ...ajustes, telegramChatId: e.target.value })}
-              onBlur={() => guardarAjustes({ telegramChatId: ajustes.telegramChatId })}
-              className={`${entrada} font-mono`}
-            />
-            <button
-              type="button"
-              onClick={identificarChat}
-              disabled={buscandoChat}
-              className="shrink-0 border border-linea-fuerte px-3 text-sm hover:border-tinta disabled:opacity-40"
-            >
-              {buscandoChat ? 'Buscando…' : 'Identificar'}
-            </button>
-          </div>
-
-          {pistaChat && <p className="mt-2 text-xs text-aviso">{pistaChat}</p>}
-
-          {chats && chats.length > 0 && (
-            <ul className="mt-2 space-y-1 border border-linea bg-papel p-2">
-              {chats.map((c) => (
-                <li key={c.id} className="flex items-center gap-2 text-sm">
-                  <span className="flex-1 truncate">
-                    {c.nombre} <span className="text-tenue">· {c.tipo}</span>
-                  </span>
-                  <span className="font-mono text-xs text-tenue">{c.id}</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAjustes({ ...ajustes, telegramChatId: c.id })
-                      guardarAjustes({ telegramChatId: c.id })
-                      setChats(null)
-                    }}
-                    className="etiqueta hover:text-tinta"
-                  >
-                    Usar este
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {ajustes.telegramChatId && (
-            <button
-              type="button"
-              onClick={async () => {
-                const res = await fetch('/api/notify', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ tipo: 'libre', texto: 'Prueba de avisos del SDR.' }),
-                })
-                setAviso(res.ok ? 'Aviso de prueba enviado.' : null)
-                setError(res.ok ? null : 'No llegó: revisa el número.')
-              }}
-              className="etiqueta mt-2 hover:text-tinta"
-            >
-              Enviar aviso de prueba
-            </button>
           )}
         </div>
 

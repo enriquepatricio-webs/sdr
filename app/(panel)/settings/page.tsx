@@ -23,7 +23,6 @@ export default async function PaginaAjustes() {
         workspace: ajustes.workspace && { id: ajustes.workspace.id, name: ajustes.workspace.name },
       }}
       campanasActivas={Number(activas[0]?.n ?? 0)}
-      tieneTelegramEnv={Boolean(process.env.TELEGRAM_CHAT_ID)}
     />
   )
 }

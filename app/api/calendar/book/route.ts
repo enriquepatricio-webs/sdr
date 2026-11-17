@@ -5,7 +5,6 @@ import { db } from '@/lib/db'
 import { campaigns, leads, meetings, playbooks, runLogs } from '@/lib/db/schema'
 import { fechaIso,jsonError, parseBody, serverError } from '@/lib/api'
 import { agendarReunion } from '@/lib/composio'
-import { avisar, formatearAvisoReunion } from '@/lib/telegram'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -97,25 +96,9 @@ export async function POST(request: Request) {
       payload: { eventId: evento.id },
     })
 
-    // El aviso no puede tumbar el agendado: si Telegram falla, la reunión existe.
-    const aviso = await avisar(
-      formatearAvisoReunion({
-        nombre: lead.fullName,
-        cargo: lead.headline,
-        empresa: lead.company,
-        inicio,
-        timezone: playbook.bookingRules.timezone,
-        score: lead.score,
-        porQue: lead.qualification?.summary ?? lead.qualification?.reasoning ?? '',
-        leadId: lead.id,
-      }),
-      campana.workspaceId,
-    ).catch(() => ({ ok: false as const, error: 'Telegram falló' }))
-
     return NextResponse.json({
       reunion,
       meetUrl: evento.meetUrl ?? evento.htmlLink,
-      avisoEnviado: aviso.ok,
     })
   } catch (err) {
     return serverError(err, 'No se pudo agendar la reunión')

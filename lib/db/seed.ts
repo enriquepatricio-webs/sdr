@@ -374,8 +374,6 @@ const DEFAULT_SETTINGS: { key: string; value: unknown }[] = [
   // Arranca SIEMPRE apagado. Se enciende a mano desde /settings.
   { key: 'autopilot', value: false },
   { key: 'openrouter_model', value: 'anthropic/claude-sonnet-4.5' },
-  // Vacío = tira del env TELEGRAM_CHAT_ID. Si se rellena aquí, manda esto.
-  { key: 'telegram_chat_id', value: '' },
   { key: 'company_name', value: 'Tu Empresa' },
 ]
 

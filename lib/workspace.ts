@@ -30,7 +30,6 @@ export const AJUSTES_GLOBALES = [
 /** Lo que cada empresa decide por su cuenta. Vive en columnas de `sellers`. */
 export const AJUSTES_POR_WORKSPACE = [
   'autopilot',
-  'telegramChatId',
   'lessons',
   'autoProspect',
   'autoProspectMinLeads',
@@ -115,7 +114,6 @@ export async function ajustesEfectivos(
   return {
     ...globales,
     autopilot: ws.autopilot,
-    telegramChatId: ws.telegramChatId || globales.telegramChatId,
     companyName: ws.name,
     lessons: ws.lessons ?? null,
     autoProspect: ws.autoProspect,

@@ -34,7 +34,6 @@ const cuerpo = z
     workspaceId: z.string().uuid().optional(),
     autopilot: z.boolean().optional(),
     openrouterModel: z.string().min(1).optional(),
-    telegramChatId: z.string().optional(),
     companyName: z.string().min(1).optional(),
     enrichBeforeContact: z.boolean().optional(),
     autoProspect: z.boolean().optional(),
@@ -54,7 +53,6 @@ const cuerpo = z
  */
 const COLUMNA_DE_WORKSPACE = {
   autopilot: 'autopilot',
-  telegramChatId: 'telegramChatId',
   companyName: 'name',
   autoProspect: 'autoProspect',
   autoProspectMinLeads: 'autoProspectMinLeads',
